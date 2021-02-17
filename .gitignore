@@ -1,0 +1,10 @@
+.vscode*
+.idea/*
+.vscode/*
+*.pyc
+*__pycache__*
+*.DS_Store
+.mypy_cache*
+tmp*
+logs*
+checkpoints*
