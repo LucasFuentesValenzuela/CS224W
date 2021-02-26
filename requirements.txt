@@ -4,5 +4,6 @@ tqdm
 mypy
 tensorboard
 ogb
-torch_geometric
-torch_sparse
+torch-scatter
+torch-sparse
+torch-geometric

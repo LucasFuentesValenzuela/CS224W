@@ -7,6 +7,7 @@ from typing import Tuple, Optional
 class GNN(nn.Module):
     def __init__(self):
         super(GNN, self).__init__()
+        self.weight = nn.Parameter(torch.tensor(0.))
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
@@ -16,7 +17,7 @@ class GNN(nn.Module):
         Outputs:
             prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
         '''
-        return torch.zeros(edges.shape[1])
+        return torch.zeros(edges.shape[1], dtype=torch.float32, device=self.weight.device) * self.weight
 
 
 def get_model(model_name: str) -> type:

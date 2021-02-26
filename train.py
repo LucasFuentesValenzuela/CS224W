@@ -31,7 +31,7 @@ def train_model(
 
     device = model_utils.get_device()
     loss_fn = nn.functional.binary_cross_entropy # TODO: Set this to the correct loss fn
-    val_loss_fn = model_utils.l1_norm_loss # TODO: Set this to the correct loss fn
+    val_loss_fn = nn.functional.binary_cross_entropy # TODO: Set this to the correct loss fn
     best_val_loss = torch.tensor(float('inf'))
     saved_checkpoints = []
     writer = SummaryWriter(log_dir=f'{args.log_dir}/{args.experiment}')
@@ -48,11 +48,11 @@ def train_model(
             adj_t = train_graph.adj_t.to(device)
             edge_index = train_graph.edge_index.to(device)
 
-            for i, y_pos_edges in enumerate(train_dl):
-                y_pos_edges = y_pos_edges.T.to(device)
+            for i, (y_pos_edges,) in enumerate(train_dl):
+                y_pos_edges = y_pos_edges.to(device).T
                 y_neg_edges = negative_sampling(
                     edge_index,
-                    num_nodes=adj_t.shape[0],
+                    num_nodes=train_graph.num_nodes,
                     num_neg_samples=y_pos_edges.shape[1]
                 ).to(device)
                 y_batch = torch.cat([torch.ones(y_pos_edges.shape[1]), torch.zeros(y_neg_edges.shape[1])], dim=0).to(device) # Ground truth edge labels (1 or 0)
@@ -68,7 +68,7 @@ def train_model(
                 if args.use_scheduler:
                     lr_scheduler.step(loss)
 
-                progress_bar.update(len(y_pos_edges))
+                progress_bar.update(y_pos_edges.shape[1])
                 progress_bar.set_postfix(loss=loss.item())
                 writer.add_scalar("train/Loss", loss, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
 
@@ -150,10 +150,10 @@ def main():
         shuffle=True,
     )
     dev_dl = data.DataLoader(
-        data.TensorDataset([
+        data.TensorDataset(
             torch.cat([valid_edges['edge'], valid_edges['edge_neg']], dim=0),
             torch.cat([torch.ones(valid_edges['edge'].shape[0]), torch.zeros(valid_edges['edge_neg'].shape[0])], dim=0),
-        ]),
+        ),
         batch_size=args.val_batch_size,
         shuffle=False,
     )
@@ -166,7 +166,7 @@ def main():
         model = model_utils.load_model(model, args.load_path)
 
     # Move model to GPU if necessary
-    model.to(device)
+    model = model.to(device)
 
     # Initialize optimizer
     optimizer = optim.Adam(

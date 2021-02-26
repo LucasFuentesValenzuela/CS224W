@@ -51,7 +51,7 @@ def load_training_data() -> Tuple[
 
     # Partition training edges
     perm = torch.randperm(train_edges['edge'].shape[0])
-    eval_idxs, train_idxs = perm[:valid_edges.shape[0]], perm[valid_edges.shape[0]:]
+    eval_idxs, train_idxs = perm[:valid_edges['edge'].shape[0]], perm[valid_edges['edge'].shape[0]:]
     eval_edges = {'edge': train_edges['edge'][eval_idxs]}
     train_edges = {'edge': train_edges['edge'][train_idxs]}
 
