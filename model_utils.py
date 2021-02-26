@@ -29,8 +29,8 @@ def load_model(model: nn.Module, path: str) -> nn.Module:
 
 
 def load_training_data() -> Tuple[
-    pyg.torch_geometric.data.Data,
-    pyg.torch_geometric.data.Data,
+    pyg.data.Data,
+    pyg.data.Data,
     Dict[str, torch.Tensor],
     Dict[str, torch.Tensor]
 ]:
@@ -96,6 +96,19 @@ def load_test_data() -> Tuple[
     valid_graph = transform(valid_graph)
     test_graph = transform(test_graph)
     return valid_graph, test_graph, valid_edges, test_edges
+
+def initialize_embeddings(graph: pyg.data.Data, name: str):
+    '''
+    Input
+        graph: PyG graph
+        name: str describing the type of initialization
+    '''
+
+    if name == 'ones':
+        features = torch.Tensor(np.ones(graph.num_nodes,)).reshape(-1, 1)
+        graph.x = features
+
+    return graph
 
 
 def check_membership(edge, edge_list):
