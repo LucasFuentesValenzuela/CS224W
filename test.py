@@ -11,7 +11,7 @@ import torch_geometric as pyg
 from tqdm import tqdm # type: ignore
 from ogb.linkproppred import Evaluator
 
-from args import add_test_args, add_common_args
+from args import add_model_args, add_test_args, add_common_args
 import models
 import model_utils
 
@@ -96,6 +96,7 @@ def main():
     parser = argparse.ArgumentParser()
     add_test_args(parser)
     add_common_args(parser)
+    add_model_args(parser)
     args = parser.parse_args()
 
     device = model_utils.get_device()
@@ -113,10 +114,11 @@ def main():
     )
 
     # Initialize node embeddings
-    test_graph = model_utils.initialize_embeddings(test_graph, args.init_embeddings)
+    test_graph = model_utils.initialize_embeddings(test_graph)
+    valid_graph = model_utils.initialize_embeddings(valid_graph)
 
     # Initialize a model
-    model = models.get_model(args.model)(test_graph, args)
+    model = models.get_model(args.model)(test_graph.x.shape, args)
 
     # load from checkpoint if path specified
     assert args.load_path is not None

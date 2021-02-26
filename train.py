@@ -11,7 +11,7 @@ from tqdm import tqdm # type: ignore
 import torch_geometric as pyg
 from torch_geometric.utils import negative_sampling
 
-from args import add_train_args, add_experiment, add_common_args, save_arguments
+from args import add_model_args, add_train_args, add_experiment, add_common_args, save_arguments
 import models
 import model_utils
 
@@ -136,11 +136,13 @@ def main():
     parser = argparse.ArgumentParser()
     add_train_args(parser)
     add_common_args(parser)
+    add_model_args(parser)
     args = parser.parse_args()
     add_experiment(args)
     device = model_utils.get_device()
 
     # Load dataset from disk
+    print('Loading train data...')
     train_graph, valid_graph, eval_edges, valid_edges = model_utils.load_training_data()
     train_dl = data.DataLoader(
         data.TensorDataset(eval_edges['edge']),
@@ -157,15 +159,17 @@ def main():
     )
 
     # Initialize node embeddings
-    train_graph = model_utils.initialize_embeddings(train_graph, args.init_embeddings)
+    print('Computing initial embeddings')
+    train_graph = model_utils.initialize_embeddings(train_graph)
+    valid_graph = model_utils.initialize_embeddings(valid_graph)
 
     # Initialize a model
-    model = models.get_model(args.model)(train_graph, args)
+    model = models.get_model(args.model)(train_graph.x.shape, args)
 
     # load from checkpoint if path specified
     if args.load_path is not None:
         model = model_utils.load_model(model, args.load_path)
-    
+
     # Move model to GPU if necessary
     model.to(device)
 

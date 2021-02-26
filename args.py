@@ -77,31 +77,38 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
         action='store_true',
         help='Use this flag to avoid learning rate scheduling.',
     )
+
+
+def add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        '--init_embeddings',
-        default = 'ones',
-        choices = ['ones'], 
-        help = 'Node embedding initialization'
-    )
-    parser.add_argument(
-        '--num_layers', 
-        default = 3, 
+        '--num_layers',
+        type=int,
+        default = 3,
         help = 'Number of GNN layers'
     )
     parser.add_argument(
-        '--hidden_dim', 
+        '--hidden_dim',
+        type=int,
         default = 64,
         help = 'Dimension of hidden layers'
     )
     parser.add_argument(
-        '--output_dim', 
-        default = 16,
+        '--output_dim',
+        type=int,
+        default = 64,
         help = 'Final embedding dimension'
     )
     parser.add_argument(
-        '--dropout', 
+        '--dropout',
+        type=float,
         default = 0.5,
         help = 'Dropout probability'
+    )
+    parser.add_argument(
+        '--embedding_dim',
+        type=int,
+        default=64,
+        help='Size of learned node embeddings',
     )
 
 

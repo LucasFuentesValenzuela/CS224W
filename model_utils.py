@@ -10,6 +10,7 @@ from tqdm import tqdm # type: ignore
 from ogb.linkproppred import PygLinkPropPredDataset
 import torch_geometric as pyg
 import torch_geometric.transforms as T
+import networkx as nx
 
 import models
 
@@ -97,16 +98,31 @@ def load_test_data() -> Tuple[
     test_graph = transform(test_graph)
     return valid_graph, test_graph, valid_edges, test_edges
 
-def initialize_embeddings(graph: pyg.data.Data, name: str):
+def initialize_embeddings(graph: pyg.data.Data):
     '''
     Input
         graph: PyG graph
-        name: str describing the type of initialization
     '''
+    g_nx = pyg.torch_geometric.utils.convert.to_networkx(graph, to_undirected=True)
+    print('  Computing pagerank')
+    pageranks = nx.pagerank(g_nx)
+    pagerank_vector = torch.zeros((graph.num_nodes, 1), dtype=torch.float32)
+    for node in range(graph.num_nodes):
+        pagerank_vector[node] = pageranks[node]
 
-    if name == 'ones':
-        features = torch.Tensor(np.ones(graph.num_nodes,)).reshape(-1, 1)
-        graph.x = features
+    print('  Computing degrees')
+    degree_vector = torch.zeros((graph.num_nodes, 1), dtype=torch.float32)
+    for node in range(graph.num_nodes):
+        degree_vector[node] = g_nx.degree[node]
+
+    print('  Computing clustering coefficients')
+    clustering_coeffs = nx.clustering(g_nx)
+    cc_vector = torch.zeros((graph.num_nodes, 1), dtype=torch.float32)
+    for node in range(graph.num_nodes):
+        cc_vector[node] = clustering_coeffs[node]
+
+    features = torch.cat([degree_vector, cc_vector, pagerank_vector], dim=1)
+    graph.x = features
 
     return graph
 

@@ -1,3 +1,5 @@
+import argparse
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -9,17 +11,20 @@ from torch_geometric.nn import GCNConv
 
 # Graph Convolutional Neural Network
 class GCN(nn.Module):
-    def __init__(self, data, args):
+    def __init__(self, embedding_shape: Tuple[int, int], args: argparse.Namespace):
         super().__init__()
 
         # architecture
-        input_dim = data.num_features
+        input_dim = embedding_shape[1]
+        self.embedding_dim = args.embedding_dim
         hidden_dim = args.hidden_dim
         output_dim = args.output_dim
         num_layers = args.num_layers
 
         # layers
-        conv_layers = [GCNConv(input_dim, hidden_dim)] + \
+        self.embedding = nn.Embedding(embedding_shape[0], self.embedding_dim - input_dim)
+
+        conv_layers = [GCNConv(self.embedding_dim, hidden_dim)] + \
             [GCNConv(hidden_dim, hidden_dim) for _ in range(num_layers-2)] + \
             [GCNConv(hidden_dim, output_dim)]
         self.convs = conv_layers
@@ -38,12 +43,15 @@ class GCN(nn.Module):
     def forward(self, x: torch.Tensor, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
         Inputs:
-            x: Tensor shape (num_nodes, initial_embedding_dim)
+            x: Tensor shape (num_nodes, input_dim)
             adj_t: SparseTensor shape (num_nodes, num_nodes)
             edges: Tensor shape (2, num_query_edges)
         Outputs:
             prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
         '''
+
+        # Initial embedding lookup
+        x = torch.cat([self.embedding.weight, x], dim=1) # shape num_nodes, embedding_dim
 
         # Building new node embeddings with GCNConv layers
         for k in range(len(self.convs)-1):
@@ -58,7 +66,7 @@ class GCN(nn.Module):
         x_s = x[edges[0, :]]
         # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
         x_t = x[edges[1, :]]
-        out = torch.sum(x_s*x_t, (1))  # dot product decoder
+        out = torch.sum(x_s*x_t, dim=1)  # dot product decoder
         return torch.sigmoid(out)  # cast values between 0 and 1
 
 
