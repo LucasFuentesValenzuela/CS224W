@@ -7,3 +7,4 @@ ogb
 torch-scatter
 torch-sparse
 torch-geometric
+deepsnap
