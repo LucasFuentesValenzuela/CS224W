@@ -112,8 +112,11 @@ def main():
         shuffle=False,
     )
 
+    # Initialize node embeddings
+    test_graph = model_utils.initialize_embeddings(test_graph, args.init_embeddings)
+
     # Initialize a model
-    model = models.get_model(args.model)()
+    model = models.get_model(args.model)(test_graph, args)
 
     # load from checkpoint if path specified
     assert args.load_path is not None

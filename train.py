@@ -57,7 +57,7 @@ def train_model(
 
                 # Forward pass on model
                 optimizer.zero_grad()
-                y_pred = model(adj_t, torch.cat([y_pos_edges, y_neg_edges], dim=1))
+                y_pred = model(train_graph.x, adj_t, torch.cat([y_pos_edges, y_neg_edges], dim=1))
                 loss = loss_fn(y_pred, y_batch)
 
                 # Backward pass and optimization
@@ -156,13 +156,16 @@ def main():
         shuffle=False,
     )
 
+    # Initialize node embeddings
+    train_graph = model_utils.initialize_embeddings(train_graph, args.init_embeddings)
+
     # Initialize a model
-    model = models.get_model(args.model)()
+    model = models.get_model(args.model)(train_graph, args)
 
     # load from checkpoint if path specified
     if args.load_path is not None:
         model = model_utils.load_model(model, args.load_path)
-
+    
     # Move model to GPU if necessary
     model.to(device)
 
