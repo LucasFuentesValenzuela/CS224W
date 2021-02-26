@@ -3,3 +3,6 @@ torch==1.7.1
 tqdm
 mypy
 tensorboard
+ogb
+torch_geometric
+torch_sparse

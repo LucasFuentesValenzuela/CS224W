@@ -45,7 +45,7 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--checkpoint_freq',
         type=int,
-        default=5,
+        default=1,
         help='Number of epochs between each checkpoint',
     )
     parser.add_argument(
@@ -83,14 +83,8 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--model',
         type=str,
-        default='UNet',
+        default='GNN',
         help='choose the model to train',
-    )
-    parser.add_argument(
-        '--dataset_dir',
-        type=str,
-        default='/home/cs224w/cs224w/',
-        help='path to directory containing .pkl files',
     )
     parser.add_argument(
         '--load_path',
@@ -103,12 +97,6 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         type=str,
         default=None,
         help='Give the model a name that will be a part of the experiment path.',
-    )
-    parser.add_argument(
-        '--dev_frac',
-        type=float,
-        default=0.1,
-        help='Indicates fraction of data to be partitioned into dev set.'
     )
 
 def add_test_args(parser: argparse.ArgumentParser) -> None:
