@@ -36,8 +36,8 @@ def load_training_data() -> Tuple[
 ]:
     '''
     Returns Tuple
-        eval_graph Graph containing a subset of the training edges
-        train_graph Graph containing all training edges
+        train_graph Graph containing a subset of the training edges
+        valid_graph Graph containing all training edges
         eval_edges Dict of positive edges from the training edges set that aren't in eval_graph
         valid_edges Dict of positive and negative edges not in train_graph.
     '''
@@ -46,8 +46,8 @@ def load_training_data() -> Tuple[
     edge_split = dataset.get_edge_split()
     train_edges = edge_split['train']
     valid_edges = edge_split['valid']
-    eval_graph = dataset[0]
-    train_graph = eval_graph.clone()
+    train_graph = dataset[0]
+    valid_graph = train_graph.clone()
 
     # Partition training edges
     perm = torch.randperm(train_edges['edge'].shape[0])
@@ -57,11 +57,11 @@ def load_training_data() -> Tuple[
 
     # Update graph object to have subset of edges and adj_t matrix
     train_edge_index = torch.cat([train_edges['edge'].T, train_edges['edge'][:, [1, 0]].T], dim=1)
-    eval_graph.edge_index = train_edge_index
-    eval_graph = transform(eval_graph)
+    train_graph.edge_index = train_edge_index
     train_graph = transform(train_graph)
+    valid_graph = transform(valid_graph)
 
-    return eval_graph, train_graph, eval_edges, valid_edges
+    return train_graph, valid_graph, eval_edges, valid_edges
 
 
 def load_test_data() -> Tuple[
@@ -72,8 +72,8 @@ def load_test_data() -> Tuple[
 ]:
     '''
     Returns Tuple
-        train_graph Graph containing all training edges
-        valid_graph Graph containing all training edges, plus validation edges
+        valid_graph Graph containing all training edges
+        test_graph Graph containing all training edges, plus validation edges
         valid_edges Dict of positive and negative edges from validation edge split (not in train_graph)
         test_edges Dict of positive and negative edges from test edge split (not in valid_graph)
     '''
@@ -82,20 +82,20 @@ def load_test_data() -> Tuple[
     edge_split = dataset.get_edge_split()
     valid_edges = edge_split['valid']
     test_edges = edge_split['test']
-    train_graph = dataset[0]
-    valid_graph = train_graph.clone()
+    valid_graph = dataset[0]
+    test_graph = valid_graph.clone()
 
     # Add validation edges to valid_graph for test inference
     valid_edge_index = torch.cat([
-            valid_graph.edge_index,
+            test_graph.edge_index,
             valid_edges['edge'].T,
             valid_edges['edge'][:, [1, 0]].T
         ], dim=1)
-    valid_graph.edge_index = valid_edge_index
+    test_graph.edge_index = valid_edge_index
 
-    train_graph = transform(train_graph)
     valid_graph = transform(valid_graph)
-    return train_graph, valid_graph, valid_edges, test_edges
+    test_graph = transform(test_graph)
+    return valid_graph, test_graph, valid_edges, test_edges
 
 
 def check_membership(edge, edge_list):

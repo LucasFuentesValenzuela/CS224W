@@ -19,8 +19,6 @@ import model_utils
 def train_model(
     train_graph: pyg.torch_geometric.data.Data,
     valid_graph: pyg.torch_geometric.data.Data,
-    eval_edges: Dict[str, torch.Tensor],
-    valid_edges: Dict[str, torch.Tensor],
     train_dl: data.DataLoader,
     dev_dl: data.DataLoader,
     model: nn.Module,
@@ -166,7 +164,7 @@ def main():
         model = model_utils.load_model(model, args.load_path)
 
     # Move model to GPU if necessary
-    model = model.to(device)
+    model.to(device)
 
     # Initialize optimizer
     optimizer = optim.Adam(
@@ -192,8 +190,6 @@ def main():
     trained_model = train_model(
         train_graph,
         valid_graph,
-        eval_edges,
-        valid_edges,
         train_dl,
         dev_dl,
         model,

@@ -103,6 +103,6 @@ def add_test_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=1,
+        default=100,
         help='mini-batch size',
     )
