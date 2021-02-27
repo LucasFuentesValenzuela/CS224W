@@ -47,6 +47,7 @@ def train_model(
             edge_index = train_graph.edge_index.to(device)
             x = train_graph.x.to(device)
 
+            accuracy = 0
             for i, (y_pos_edges,) in enumerate(train_dl):
                 y_pos_edges = y_pos_edges.to(device).T
                 y_neg_edges = negative_sampling(
@@ -67,8 +68,11 @@ def train_model(
                 if args.use_scheduler:
                     lr_scheduler.step(loss)
 
+                batch_acc = torch.mean(1 - torch.abs(y_batch.detach() - torch.round(y_pred.detach()))).item()
+                accuracy = 0.9 * accuracy + 0.1 * batch_acc
+
                 progress_bar.update(y_pos_edges.shape[1])
-                progress_bar.set_postfix(loss=loss.item())
+                progress_bar.set_postfix(loss=loss.item(), acc=accuracy)
                 writer.add_scalar("train/Loss", loss, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
 
                 del y_pos_edges
