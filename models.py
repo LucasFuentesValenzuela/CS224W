@@ -34,6 +34,10 @@ class GCN(nn.Module):
         self.bns = nn.ModuleList(bns_layers)
         self.dropout = args.dropout
 
+        self.lins = nn.ModuleList([nn.Linear(output_dim, hidden_dim)] + \
+            [nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers-2)] + \
+            [nn.Linear(hidden_dim, 1)])
+
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
@@ -66,7 +70,13 @@ class GCN(nn.Module):
         x_s = x[edges[0, :]]
         # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
         x_t = x[edges[1, :]]
-        out = torch.sum(x_s*x_t, dim=1)  # dot product decoder
+
+        out = x_s * x_t
+        for k in range(len(self.preds)-1):
+            out = self.lins[k](out)
+            out = F.relu(out)
+            out = F.dropout(out, p=self.dropout, training=self.training)
+        out = self.lins[-1](out)
         return torch.sigmoid(out)  # cast values between 0 and 1
 
 
