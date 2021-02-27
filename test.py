@@ -59,6 +59,7 @@ def test_model(
 
         del adj_t
         del edge_index
+        del x
 
     pos_pred = torch.cat(pos_pred, dim=0)
     neg_pred = torch.cat(neg_pred, dim=0)
