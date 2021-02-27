@@ -74,6 +74,7 @@ def train_model(
                 progress_bar.update(y_pos_edges.shape[1])
                 progress_bar.set_postfix(loss=loss.item(), acc=accuracy)
                 writer.add_scalar("train/Loss", loss, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
+                writer.add_scalar("train/Accuracy", batch_acc, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
 
                 del y_pos_edges
                 del y_neg_edges
@@ -106,12 +107,14 @@ def train_model(
                 loss = val_loss_fn(y_pred, y_batch)
 
                 num_samples_processed += edges_batch.shape[1]
-                accuracy += torch.sum(1 - torch.abs(y_batch - torch.round(y_pred))).item()
+                batch_acc = torch.mean(1 - torch.abs(y_batch - torch.round(y_pred))).item()
+                accuracy += batch_acc * edges_batch.shape[1]
                 val_loss += loss.item() * edges_batch.shape[1]
 
                 progress_bar.update(edges_batch.shape[1])
                 progress_bar.set_postfix(val_loss=val_loss / num_samples_processed, acc=accuracy/num_samples_processed)
                 writer.add_scalar("Val/Loss", loss, ((e - 1) * len(dev_dl) + i) * args.val_batch_size)
+                writer.add_scalar("Val/Accuracy", batch_acc, ((e - 1) * len(dev_dl) + i) * args.val_batch_size)
 
                 del edges_batch
                 del y_batch
