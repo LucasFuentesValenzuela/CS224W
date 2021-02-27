@@ -160,8 +160,8 @@ def main():
 
     # Initialize node embeddings
     print('Computing initial embeddings')
-    train_graph = model_utils.initialize_embeddings(train_graph)
-    valid_graph = model_utils.initialize_embeddings(valid_graph)
+    train_graph = model_utils.initialize_embeddings(train_graph, 'train_embeddings.pt', args.refresh_embeddings)
+    valid_graph = model_utils.initialize_embeddings(valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
 
     # Initialize a model
     model = models.get_model(args.model)(train_graph.x.shape, args)

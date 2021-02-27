@@ -132,6 +132,11 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help='Give the model a name that will be a part of the experiment path.',
     )
+    parser.add_argument(
+        '--reset_embeddings',
+        action='store_true',
+        help='Recompute graph embeddings if specified.'
+    )
 
 def add_test_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(

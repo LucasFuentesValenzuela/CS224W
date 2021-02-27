@@ -114,8 +114,8 @@ def main():
     )
 
     # Initialize node embeddings
-    test_graph = model_utils.initialize_embeddings(test_graph)
-    valid_graph = model_utils.initialize_embeddings(valid_graph)
+    test_graph = model_utils.initialize_embeddings(test_graph, 'test_embeddings.pt', args.refresh_embeddings)
+    valid_graph = model_utils.initialize_embeddings(valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
 
     # Initialize a model
     model = models.get_model(args.model)(test_graph.x.shape, args)

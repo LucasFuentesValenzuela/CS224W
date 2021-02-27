@@ -51,6 +51,7 @@ def load_training_data() -> Tuple[
     valid_graph = train_graph.clone()
 
     # Partition training edges
+    torch.manual_seed(12345)
     perm = torch.randperm(train_edges['edge'].shape[0])
     eval_idxs, train_idxs = perm[:valid_edges['edge'].shape[0]], perm[valid_edges['edge'].shape[0]:]
     eval_edges = {'edge': train_edges['edge'][eval_idxs]}
@@ -98,11 +99,18 @@ def load_test_data() -> Tuple[
     test_graph = transform(test_graph)
     return valid_graph, test_graph, valid_edges, test_edges
 
-def initialize_embeddings(graph: pyg.data.Data):
+def initialize_embeddings(graph: pyg.data.Data, filename: str, refresh: bool=False):
     '''
     Input
         graph: PyG graph
+        filename: File to read/write embeddings to
+        refresh: if True, recompute embeddings.
     '''
+    if not refresh:
+        features = torch.load(filename)
+        graph.x = features
+        return graph
+
     g_nx = pyg.torch_geometric.utils.convert.to_networkx(graph, to_undirected=True)
     print('  Computing pagerank')
     pageranks = nx.pagerank(g_nx)
@@ -124,6 +132,7 @@ def initialize_embeddings(graph: pyg.data.Data):
     features = torch.cat([degree_vector, cc_vector, pagerank_vector], dim=1)
     graph.x = features
 
+    torch.save(features, filename)
     return graph
 
 
