@@ -27,7 +27,7 @@ class GCN(nn.Module):
         conv_layers = [GCNConv(self.embedding_dim, hidden_dim)] + \
             [GCNConv(hidden_dim, hidden_dim) for _ in range(num_layers-2)] + \
             [GCNConv(hidden_dim, output_dim)]
-        self.convs = conv_layers
+        self.convs = nn.ModuleList(conv_layers)
 
         bns_layers = [nn.BatchNorm1d(num_features=hidden_dim)
                       for _ in range(num_layers)]

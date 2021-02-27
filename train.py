@@ -45,6 +45,7 @@ def train_model(
             # Load graph into GPU
             adj_t = train_graph.adj_t.to(device)
             edge_index = train_graph.edge_index.to(device)
+            x = train_graph.x.to(device)
 
             for i, (y_pos_edges,) in enumerate(train_dl):
                 y_pos_edges = y_pos_edges.to(device).T
@@ -57,7 +58,7 @@ def train_model(
 
                 # Forward pass on model
                 optimizer.zero_grad()
-                y_pred = model(train_graph.x, adj_t, torch.cat([y_pos_edges, y_neg_edges], dim=1))
+                y_pred = model(x, adj_t, torch.cat([y_pos_edges, y_neg_edges], dim=1))
                 loss = loss_fn(y_pred, y_batch)
 
                 # Backward pass and optimization
@@ -77,6 +78,7 @@ def train_model(
 
             del adj_t
             del edge_index
+            del x
 
         # Validation portion
         torch.cuda.empty_cache()
@@ -85,6 +87,7 @@ def train_model(
 
             adj_t = valid_graph.adj_t.to(device)
             edge_index = valid_graph.edge_index.to(device)
+            x = valid_graph.x.to(device)
 
             val_loss = 0.0
             accuracy = 0
@@ -94,7 +97,7 @@ def train_model(
                 y_batch = y_batch.to(device)
 
                 # Forward pass on model in validation environment
-                y_pred = model(adj_t, edges_batch)
+                y_pred = model(x, adj_t, edges_batch)
                 y_pred = torch.round(y_pred)
                 loss = val_loss_fn(y_pred, y_batch)
 
@@ -113,6 +116,7 @@ def train_model(
 
             del adj_t
             del edge_index
+            del x
 
             # Save model if it's the best one yet.
             if val_loss / num_samples_processed < best_val_loss:
