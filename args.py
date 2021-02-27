@@ -21,7 +21,7 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--learning_rate',
         type=float,
-        default=1e-4,
+        default=5e-3,
         help='Learning rate for the optimizer',
     )
     parser.add_argument(
