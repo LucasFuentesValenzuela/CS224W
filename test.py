@@ -110,7 +110,7 @@ def main():
             torch.cat([torch.ones(test_edges['edge'].shape[0]), torch.zeros(test_edges['edge_neg'].shape[0])], dim=0)
         ),
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
     )
 
     # Initialize node embeddings

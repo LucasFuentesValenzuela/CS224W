@@ -87,7 +87,8 @@ def train_model(
             edge_index = valid_graph.edge_index.to(device)
 
             val_loss = 0.0
-            num_batches_processed = 0
+            accuracy = 0
+            num_samples_processed = 0
             for i, (edges_batch, y_batch) in enumerate(dev_dl):
                 edges_batch = edges_batch.T.to(device)
                 y_batch = y_batch.to(device)
@@ -97,11 +98,12 @@ def train_model(
                 y_pred = torch.round(y_pred)
                 loss = val_loss_fn(y_pred, y_batch)
 
-                val_loss += loss.item()
-                num_batches_processed += 1
+                num_samples_processed += edges_batch.shape[1]
+                accuracy += torch.sum(1 - torch.abs(y_batch - torch.round(y_pred))).item()
+                val_loss += loss.item() * edges_batch.shape[1]
 
                 progress_bar.update(edges_batch.shape[1])
-                progress_bar.set_postfix(val_loss=val_loss / num_batches_processed)
+                progress_bar.set_postfix(val_loss=val_loss / num_samples_processed, acc=accuracy/num_samples_processed)
                 writer.add_scalar("Val/Loss", loss, ((e - 1) * len(dev_dl) + i) * args.val_batch_size)
 
                 del edges_batch
@@ -113,8 +115,8 @@ def train_model(
             del edge_index
 
             # Save model if it's the best one yet.
-            if val_loss / num_batches_processed < best_val_loss:
-                best_val_loss = val_loss / num_batches_processed
+            if val_loss / num_samples_processed < best_val_loss:
+                best_val_loss = val_loss / num_samples_processed
                 filename = f'{args.save_path}/{args.experiment}/{model.__class__.__name__}_best_val.checkpoint'
                 model_utils.save_model(model, filename)
                 print(f'Model saved!')
@@ -155,7 +157,7 @@ def main():
             torch.cat([torch.ones(valid_edges['edge'].shape[0]), torch.zeros(valid_edges['edge_neg'].shape[0])], dim=0),
         ),
         batch_size=args.val_batch_size,
-        shuffle=False,
+        shuffle=True,
     )
 
     # Initialize node embeddings
