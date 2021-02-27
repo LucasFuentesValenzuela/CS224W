@@ -27,19 +27,19 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--train_batch_size',
         type=int,
-        default=100,
+        default=65536,
         help='training mini-batch size',
     )
     parser.add_argument(
         '--val_batch_size',
         type=int,
-        default=100,
+        default=65536,
         help='validation mini-batch size',
     )
     parser.add_argument(
         '--train_epochs',
         type=int,
-        default=30,
+        default=200,
         help='Number of epochs to train for',
     )
     parser.add_argument(
@@ -83,19 +83,19 @@ def add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--num_layers',
         type=int,
-        default = 3,
+        default = 2,
         help = 'Number of GNN layers'
     )
     parser.add_argument(
         '--hidden_dim',
         type=int,
-        default = 64,
+        default = 256,
         help = 'Dimension of hidden layers'
     )
     parser.add_argument(
         '--output_dim',
         type=int,
-        default = 64,
+        default = 256,
         help = 'Final embedding dimension'
     )
     parser.add_argument(
@@ -107,7 +107,7 @@ def add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--embedding_dim',
         type=int,
-        default=64,
+        default=256,
         help='Size of learned node embeddings',
     )
 
@@ -142,6 +142,6 @@ def add_test_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=100,
+        default=65536,
         help='mini-batch size',
     )
