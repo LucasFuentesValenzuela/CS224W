@@ -36,13 +36,14 @@ def test_model(
 
         adj_t = test_graph.adj_t.to(device)
         edge_index = test_graph.edge_index.to(device)
+        x = test_graph.x.to(device)
 
         for i, (edges_batch, y_batch) in enumerate(dev_dl):
             edges_batch = edges_batch.T.to(device)
             y_batch = y_batch.to(device)
 
             # Forward pass on model
-            y_pred = model(adj_t, edges_batch)
+            y_pred = model(x, adj_t, edges_batch)
 
             # TODO: Process y_pred in the optimal way (round it off, etc)
 
