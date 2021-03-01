@@ -1,5 +1,4 @@
 import argparse
-
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -8,7 +7,6 @@ from typing import Tuple, Optional
 # Some built in PyG layers
 from torch_geometric.nn import GCNConv, GATConv
 
-#TODO: extract predictor from the forward function
 
 # Graph Convolutional Neural Network
 class GCN(nn.Module):
@@ -36,9 +34,8 @@ class GCN(nn.Module):
         self.bns = nn.ModuleList(bns_layers)
         self.dropout = args.dropout
 
-        self.lins = nn.ModuleList([nn.Linear(output_dim, hidden_dim)] +
-                                  [nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers-2)] +
-                                  [nn.Linear(hidden_dim, 1)])
+        #predictor
+        self.predictor = LinkPredictor(output_dim, hidden_dim, 1, num_layers, self.dropout)
 
     def reset_parameters(self):
         for conv in self.convs:
@@ -74,13 +71,7 @@ class GCN(nn.Module):
         # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
         x_t = x[edges[1, :]]
 
-        out = x_s * x_t
-        for k in range(len(self.lins)-1):
-            out = self.lins[k](out)
-            out = F.relu(out)
-            out = F.dropout(out, p=self.dropout, training=self.training)
-        out = self.lins[-1](out)
-        return torch.sigmoid(out).flatten()  # cast values between 0 and 1
+        return self.predictor(x_s, x_t)
 
 # Graph Attention Networks
 
@@ -131,9 +122,8 @@ class GAT(nn.Module):
                       for _ in range(num_layers)]
         self.bns = nn.ModuleList(bns_layers)
 
-        self.lins = nn.ModuleList([nn.Linear(output_dim, hidden_dim)] +
-                                  [nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers-2)] +
-                                  [nn.Linear(hidden_dim, 1)])
+        #predictor
+        self.predictor = LinkPredictor(output_dim, hidden_dim, 1, num_layers, self.dropout)
 
     def reset_parameters(self):
         for conv in self.convs:
@@ -170,13 +160,7 @@ class GAT(nn.Module):
         # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
         x_t = x[edges[1, :]]
 
-        out = x_s * x_t
-        for k in range(len(self.lins)-1):
-            out = self.lins[k](out)
-            out = F.relu(out)
-            out = F.dropout(out, p=self.dropout, training=self.training)
-        out = self.lins[-1](out)
-        return torch.sigmoid(out).flatten()  # cast values between 0 and 1
+        return self.predictor(x_s, x_t)
 
 
 def get_model(model_name: str) -> type:
@@ -185,3 +169,34 @@ def get_model(model_name: str) -> type:
         if m.__name__ == model_name:
             return m
     assert False, f'Could not find model {model_name}!'
+
+
+################
+# Predictors 
+################
+
+class LinkPredictor(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers,
+                 dropout):
+        super(LinkPredictor, self).__init__()
+
+        self.lins = torch.nn.ModuleList()
+        self.lins.append(torch.nn.Linear(in_channels, hidden_channels))
+        for _ in range(num_layers - 2):
+            self.lins.append(torch.nn.Linear(hidden_channels, hidden_channels))
+        self.lins.append(torch.nn.Linear(hidden_channels, out_channels))
+
+        self.dropout = dropout
+
+    def reset_parameters(self):
+        for lin in self.lins:
+            lin.reset_parameters()
+
+    def forward(self, x_i, x_j):
+        x = x_i * x_j
+        for lin in self.lins[:-1]:
+            x = lin(x)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.lins[-1](x)
+        return torch.sigmoid(x).flatten()
