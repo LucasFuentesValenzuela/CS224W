@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import dict
+from typing import Dict
 
 import numpy as np
 import torch
@@ -19,8 +19,8 @@ import model_utils
 
 @torch.no_grad()
 def test_model(
-    graphs: dict[str, pyg.torch_geometric.data.Data],
-    dataloaders: dict[str, data.DataLoader],
+    graphs: Dict[str, pyg.torch_geometric.data.Data],
+    dataloaders: Dict[str, data.DataLoader],
     model: nn.Module,
     evaluator: Evaluator,
     args: argparse.Namespace,
