@@ -108,7 +108,7 @@ def train_model(
             print('*' * 30)
             for k, v in results.items():
                 print(f'{k}: {v}')
-                writer.add_scalar(f"Train/{k}", v, (pos_pred[0] + neg_pred[0]) * e)
+                writer.add_scalar(f"train/{k}", v, (pos_pred.shape[0] + neg_pred.shape[0]) * e)
             print('*' * 30)
 
             del pos_pred
@@ -134,7 +134,6 @@ def train_model(
 
                 # Forward pass on model in validation environment
                 y_pred = model(x, adj_t, edges_batch)
-                y_pred = torch.round(y_pred)
                 loss = val_loss_fn(y_pred, y_batch)
 
                 num_samples_processed += edges_batch.shape[1]
@@ -176,7 +175,7 @@ def train_model(
             print('*' * 30)
             for k, v in results.items():
                 print(f'{k}: {v}')
-                writer.add_scalar(f"Val/{k}", v, (pos_pred[0] + neg_pred[0]) * e)
+                writer.add_scalar(f"Val/{k}", v, (pos_pred.shape[0] + neg_pred.shape[0]) * e)
             print('*' * 30)
 
             del pos_pred
