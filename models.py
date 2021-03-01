@@ -6,8 +6,9 @@ import torch.nn.functional as F
 import torch_sparse
 from typing import Tuple, Optional
 # Some built in PyG layers
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, GATConv
 
+#TODO: extract predictor from the forward function
 
 # Graph Convolutional Neural Network
 class GCN(nn.Module):
@@ -22,7 +23,8 @@ class GCN(nn.Module):
         num_layers = args.num_layers
 
         # layers
-        self.embedding = nn.Embedding(embedding_shape[0], self.embedding_dim - input_dim)
+        self.embedding = nn.Embedding(
+            embedding_shape[0], self.embedding_dim - input_dim)
 
         conv_layers = [GCNConv(self.embedding_dim, hidden_dim)] + \
             [GCNConv(hidden_dim, hidden_dim) for _ in range(num_layers-2)] + \
@@ -34,9 +36,9 @@ class GCN(nn.Module):
         self.bns = nn.ModuleList(bns_layers)
         self.dropout = args.dropout
 
-        self.lins = nn.ModuleList([nn.Linear(output_dim, hidden_dim)] + \
-            [nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers-2)] + \
-            [nn.Linear(hidden_dim, 1)])
+        self.lins = nn.ModuleList([nn.Linear(output_dim, hidden_dim)] +
+                                  [nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers-2)] +
+                                  [nn.Linear(hidden_dim, 1)])
 
     def reset_parameters(self):
         for conv in self.convs:
@@ -55,7 +57,8 @@ class GCN(nn.Module):
         '''
 
         # Initial embedding lookup
-        x = torch.cat([self.embedding.weight, x], dim=1) # shape num_nodes, embedding_dim
+        # shape num_nodes, embedding_dim
+        x = torch.cat([self.embedding.weight, x], dim=1)
 
         # Building new node embeddings with GCNConv layers
         for k in range(len(self.convs)-1):
@@ -72,16 +75,112 @@ class GCN(nn.Module):
         x_t = x[edges[1, :]]
 
         out = x_s * x_t
-        for k in range(len(self.preds)-1):
+        for k in range(len(self.lins)-1):
             out = self.lins[k](out)
             out = F.relu(out)
             out = F.dropout(out, p=self.dropout, training=self.training)
         out = self.lins[-1](out)
-        return torch.sigmoid(out)  # cast values between 0 and 1
+        return torch.sigmoid(out).flatten()  # cast values between 0 and 1
+
+# Graph Attention Networks
+
+class GAT(nn.Module):
+    def __init__(
+        self, embedding_shape: Tuple[int, int], args: argparse.Namespace, 
+        heads=2, concat=True, negative_slope=.2, bias=True
+        ):
+        super().__init__()
+
+        # architecture
+        input_dim = embedding_shape[1]
+        self.embedding_dim = args.embedding_dim
+        hidden_dim = args.hidden_dim
+
+        # multiplicative factor if multiple heads are used
+        if concat: 
+            mult_factor = heads
+        else:
+            mult_factor = 1
+
+        output_dim = args.output_dim
+        num_layers = args.num_layers
+
+        self.dropout = args.dropout
+
+        # layers
+        self.embedding = nn.Embedding(
+            embedding_shape[0], self.embedding_dim - input_dim)
+
+        #TODO: decide on whether to use concat for other layers than the first one
+        conv_layers = [
+            GATConv(self.embedding_dim, hidden_dim, 
+            heads = heads, concat = concat, negative_slope = negative_slope, 
+            dropout = self.dropout, bias = bias)
+            ] + \
+            [GATConv(mult_factor*hidden_dim, mult_factor*hidden_dim, heads = heads, 
+            concat = False, negative_slope = negative_slope, 
+            dropout = self.dropout, bias = bias) 
+            for _ in range(num_layers-2)] + \
+            [GATConv(mult_factor*hidden_dim, output_dim, heads = heads, concat = False, 
+            negative_slope = negative_slope, 
+            dropout = self.dropout, bias = bias)]
+
+        self.convs = nn.ModuleList(conv_layers)
+
+        bns_layers = [nn.BatchNorm1d(num_features=mult_factor*hidden_dim)
+                      for _ in range(num_layers)]
+        self.bns = nn.ModuleList(bns_layers)
+
+        self.lins = nn.ModuleList([nn.Linear(output_dim, hidden_dim)] +
+                                  [nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers-2)] +
+                                  [nn.Linear(hidden_dim, 1)])
+
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+        for bn in self.bns:
+            bn.reset_parameters()
+
+    def forward(self, x: torch.Tensor, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+        '''
+        Inputs:
+            x: Tensor shape (num_nodes, input_dim)
+            adj_t: SparseTensor shape (num_nodes, num_nodes)
+            edges: Tensor shape (2, num_query_edges)
+        Outputs:
+            prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
+        '''
+
+        # Initial embedding lookup
+        # shape num_nodes, embedding_dim
+        x = torch.cat([self.embedding.weight, x], dim=1)
+
+        # Building new node embeddings with GCNConv layers
+        for k in range(len(self.convs)-1):
+            x = self.convs[k](x, adj_t)
+            
+            x = self.bns[k](x)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.convs[-1](x, adj_t)
+
+        # Decode
+        # source nodes embeddings, shape (num_query_edges, final_embedding_dim)
+        x_s = x[edges[0, :]]
+        # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
+        x_t = x[edges[1, :]]
+
+        out = x_s * x_t
+        for k in range(len(self.lins)-1):
+            out = self.lins[k](out)
+            out = F.relu(out)
+            out = F.dropout(out, p=self.dropout, training=self.training)
+        out = self.lins[-1](out)
+        return torch.sigmoid(out).flatten()  # cast values between 0 and 1
 
 
 def get_model(model_name: str) -> type:
-    models = [GCN]
+    models = [GCN, GAT]
     for m in models:
         if m.__name__ == model_name:
             return m
