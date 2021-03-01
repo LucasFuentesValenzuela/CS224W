@@ -10,6 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm # type: ignore
 import torch_geometric as pyg
 from torch_geometric.utils import negative_sampling
+from ogb.linkproppred import Evaluator
 
 from args import add_model_args, add_train_args, add_experiment, add_common_args, save_arguments
 import models
@@ -21,6 +22,7 @@ def train_model(
     valid_graph: pyg.torch_geometric.data.Data,
     train_dl: data.DataLoader,
     dev_dl: data.DataLoader,
+    evaluator: Evaluator,
     model: nn.Module,
     optimizer: optim.Optimizer,
     lr_scheduler: optim.lr_scheduler._LRScheduler,
@@ -48,6 +50,9 @@ def train_model(
             x = train_graph.x.to(device)
 
             accuracy = 0
+            pos_pred = []
+            neg_pred = []
+
             for i, (y_pos_edges,) in enumerate(train_dl):
                 y_pos_edges = y_pos_edges.to(device).T
                 y_neg_edges = negative_sampling(
@@ -71,6 +76,9 @@ def train_model(
                 batch_acc = torch.mean(1 - torch.abs(y_batch.detach() - torch.round(y_pred.detach()))).item()
                 accuracy = 0.9 * accuracy + 0.1 * batch_acc
 
+                pos_pred += [y_pred[y_batch == 1].detach()]
+                neg_pred += [y_pred[y_batch == 0].detach()]
+
                 progress_bar.update(y_pos_edges.shape[1])
                 progress_bar.set_postfix(loss=loss.item(), acc=accuracy)
                 writer.add_scalar("train/Loss", loss, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
@@ -85,6 +93,27 @@ def train_model(
             del edge_index
             del x
 
+            pos_pred = torch.cat(pos_pred, dim=0)
+            neg_pred = torch.cat(neg_pred, dim=0)
+            results = {}
+            for K in [10, 20, 30]:
+                evaluator.K = K
+                hits = evaluator.eval({
+                    'y_pred_pos': pos_pred,
+                    'y_pred_neg': neg_pred,
+                })[f'hits@{K}']
+                results[f'Hits@{K}'] = hits
+            print()
+            print(f'Train Statistics')
+            print('*' * 30)
+            for k, v in results.items():
+                print(f'{k}: {v}')
+                writer.add_scalar(f"Train/{k}", v, (pos_pred[0] + neg_pred[0]) * e)
+            print('*' * 30)
+
+            del pos_pred
+            del neg_pred
+
         # Validation portion
         torch.cuda.empty_cache()
         with tqdm(total=args.val_batch_size * len(dev_dl)) as progress_bar:
@@ -97,6 +126,8 @@ def train_model(
             val_loss = 0.0
             accuracy = 0
             num_samples_processed = 0
+            pos_pred = []
+            neg_pred = []
             for i, (edges_batch, y_batch) in enumerate(dev_dl):
                 edges_batch = edges_batch.T.to(device)
                 y_batch = y_batch.to(device)
@@ -111,8 +142,13 @@ def train_model(
                 accuracy += batch_acc * edges_batch.shape[1]
                 val_loss += loss.item() * edges_batch.shape[1]
 
+                pos_pred += [y_pred[y_batch == 1].detach()]
+                neg_pred += [y_pred[y_batch == 0].detach()]
+
                 progress_bar.update(edges_batch.shape[1])
-                progress_bar.set_postfix(val_loss=val_loss / num_samples_processed, acc=accuracy/num_samples_processed)
+                progress_bar.set_postfix(
+                    val_loss=val_loss / num_samples_processed,
+                    acc=accuracy/num_samples_processed)
                 writer.add_scalar("Val/Loss", loss, ((e - 1) * len(dev_dl) + i) * args.val_batch_size)
                 writer.add_scalar("Val/Accuracy", batch_acc, ((e - 1) * len(dev_dl) + i) * args.val_batch_size)
 
@@ -124,6 +160,27 @@ def train_model(
             del adj_t
             del edge_index
             del x
+
+            pos_pred = torch.cat(pos_pred, dim=0)
+            neg_pred = torch.cat(neg_pred, dim=0)
+            results = {}
+            for K in [10, 20, 30]:
+                evaluator.K = K
+                hits = evaluator.eval({
+                    'y_pred_pos': pos_pred,
+                    'y_pred_neg': neg_pred,
+                })[f'hits@{K}']
+                results[f'Hits@{K}'] = hits
+            print()
+            print(f'Validation Statistics')
+            print('*' * 30)
+            for k, v in results.items():
+                print(f'{k}: {v}')
+                writer.add_scalar(f"Val/{k}", v, (pos_pred[0] + neg_pred[0]) * e)
+            print('*' * 30)
+
+            del pos_pred
+            del neg_pred
 
             # Save model if it's the best one yet.
             if val_loss / num_samples_processed < best_val_loss:
@@ -176,6 +233,9 @@ def main():
     train_graph = model_utils.initialize_embeddings(train_graph, 'train_embeddings.pt', args.refresh_embeddings)
     valid_graph = model_utils.initialize_embeddings(valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
 
+    # Stats evaluator
+    evaluator = Evaluator(name='ogbl-ddi')
+
     # Initialize a model
     model = models.get_model(args.model)(train_graph.x.shape, args)
 
@@ -212,6 +272,7 @@ def main():
         valid_graph,
         train_dl,
         dev_dl,
+        evaluator,
         model,
         optimizer,
         scheduler,
