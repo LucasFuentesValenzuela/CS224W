@@ -12,7 +12,7 @@ import torch_geometric as pyg
 from tqdm import tqdm # type: ignore
 from ogb.linkproppred import Evaluator
 
-from args import add_model_args, add_test_args, add_common_args
+from args import *
 import models
 import model_utils
 

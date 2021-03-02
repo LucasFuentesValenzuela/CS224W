@@ -12,7 +12,7 @@ import torch_geometric as pyg
 from torch_geometric.utils import negative_sampling
 from ogb.linkproppred import Evaluator
 
-from args import add_model_args, add_train_args, add_experiment, add_common_args, save_arguments
+from args import *
 import models
 import model_utils
 
