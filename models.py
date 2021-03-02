@@ -88,7 +88,7 @@ class GAT(nn.Module):
         output_dim=256,
         num_layers=2,
         dropout=0.5,
-        heads=2,
+        heads=1,
         concat=True,
         negative_slope=.2,
         bias=True,

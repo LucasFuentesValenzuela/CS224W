@@ -214,7 +214,7 @@ def main():
     # Load dataset from disk
     print('Loading train data...')
     train_graph, valid_graph, train_edges, eval_edges, valid_edges = model_utils.load_training_data()
-    if args.train_full_graph:
+    if not args.train_full_graph:
         train_edges['edge'] = eval_edges['edge']
 
     train_dl = data.DataLoader(
