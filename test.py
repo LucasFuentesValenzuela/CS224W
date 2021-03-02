@@ -93,7 +93,6 @@ def main():
     parser = argparse.ArgumentParser()
     add_test_args(parser)
     add_common_args(parser)
-    add_model_args(parser)
     args = parser.parse_args()
 
     device = model_utils.get_device()
@@ -133,7 +132,7 @@ def main():
     }
 
     # Initialize a model
-    model = models.get_model(args.model)(test_graph.x.shape, args)
+    model = models.get_model(args.model)(test_graph.x.shape)
 
     # load from checkpoint if path specified
     assert args.load_path is not None

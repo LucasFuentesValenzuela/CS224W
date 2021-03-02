@@ -205,7 +205,6 @@ def main():
     parser = argparse.ArgumentParser()
     add_train_args(parser)
     add_common_args(parser)
-    add_model_args(parser)
     args = parser.parse_args()
     add_experiment(args)
     device = model_utils.get_device()
@@ -236,7 +235,7 @@ def main():
     evaluator = Evaluator(name='ogbl-ddi')
 
     # Initialize a model
-    model = models.get_model(args.model)(train_graph.x.shape, args)
+    model = models.get_model(args.model)(train_graph.x.shape)
 
     # load from checkpoint if path specified
     if args.load_path is not None:

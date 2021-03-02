@@ -79,39 +79,6 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_model_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        '--num_layers',
-        type=int,
-        default = 2,
-        help = 'Number of GNN layers'
-    )
-    parser.add_argument(
-        '--hidden_dim',
-        type=int,
-        default = 256,
-        help = 'Dimension of hidden layers'
-    )
-    parser.add_argument(
-        '--output_dim',
-        type=int,
-        default = 256,
-        help = 'Final embedding dimension'
-    )
-    parser.add_argument(
-        '--dropout',
-        type=float,
-        default = 0.5,
-        help = 'Dropout probability'
-    )
-    parser.add_argument(
-        '--embedding_dim',
-        type=int,
-        default=256,
-        help='Size of learned node embeddings',
-    )
-
-
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--model',

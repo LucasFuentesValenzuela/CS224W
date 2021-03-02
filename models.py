@@ -10,21 +10,26 @@ from torch_geometric.nn import GCNConv, GATConv
 
 # Graph Convolutional Neural Network
 class GCN(nn.Module):
-    def __init__(self, embedding_shape: Tuple[int, int], args: argparse.Namespace):
+    def __init__(
+        self,
+        embedding_shape: Tuple[int, int],
+        embedding_dim=256,
+        hidden_dim=256,
+        output_dim=256,
+        num_layers=2,
+        dropout=0.5,
+    ):
         super().__init__()
 
         # architecture
         input_dim = embedding_shape[1]
-        self.embedding_dim = args.embedding_dim
-        hidden_dim = args.hidden_dim
-        output_dim = args.output_dim
-        num_layers = args.num_layers
+        self.dropout = dropout
 
         # layers
         self.embedding = nn.Embedding(
-            embedding_shape[0], self.embedding_dim - input_dim)
+            embedding_shape[0], embedding_dim - input_dim)
 
-        conv_layers = [GCNConv(self.embedding_dim, hidden_dim)] + \
+        conv_layers = [GCNConv(embedding_dim, hidden_dim)] + \
             [GCNConv(hidden_dim, hidden_dim) for _ in range(num_layers-2)] + \
             [GCNConv(hidden_dim, output_dim)]
         self.convs = nn.ModuleList(conv_layers)
@@ -32,7 +37,6 @@ class GCN(nn.Module):
         bns_layers = [nn.BatchNorm1d(num_features=hidden_dim)
                       for _ in range(num_layers)]
         self.bns = nn.ModuleList(bns_layers)
-        self.dropout = args.dropout
 
         #predictor
         self.predictor = LinkPredictor(output_dim, hidden_dim, 1, num_layers, self.dropout)
@@ -77,43 +81,46 @@ class GCN(nn.Module):
 
 class GAT(nn.Module):
     def __init__(
-        self, embedding_shape: Tuple[int, int], args: argparse.Namespace, 
-        heads=2, concat=True, negative_slope=.2, bias=True
-        ):
+        self,
+        embedding_shape: Tuple[int, int],
+        embedding_dim=256,
+        hidden_dim=256,
+        output_dim=256,
+        num_layers=2,
+        dropout=0.5,
+        heads=2,
+        concat=True,
+        negative_slope=.2,
+        bias=True,
+    ):
         super().__init__()
 
         # architecture
         input_dim = embedding_shape[1]
-        self.embedding_dim = args.embedding_dim
-        hidden_dim = args.hidden_dim
+        self.dropout = dropout
 
         # multiplicative factor if multiple heads are used
-        if concat: 
+        if concat:
             mult_factor = heads
         else:
             mult_factor = 1
 
-        output_dim = args.output_dim
-        num_layers = args.num_layers
-
-        self.dropout = args.dropout
-
         # layers
         self.embedding = nn.Embedding(
-            embedding_shape[0], self.embedding_dim - input_dim)
+            embedding_shape[0], embedding_dim - input_dim)
 
         #TODO: decide on whether to use concat for other layers than the first one
         conv_layers = [
-            GATConv(self.embedding_dim, hidden_dim, 
-            heads = heads, concat = concat, negative_slope = negative_slope, 
+            GATConv(embedding_dim, hidden_dim,
+            heads = heads, concat = concat, negative_slope = negative_slope,
             dropout = self.dropout, bias = bias)
             ] + \
-            [GATConv(mult_factor*hidden_dim, mult_factor*hidden_dim, heads = heads, 
-            concat = False, negative_slope = negative_slope, 
-            dropout = self.dropout, bias = bias) 
+            [GATConv(mult_factor*hidden_dim, mult_factor*hidden_dim, heads = heads,
+            concat = False, negative_slope = negative_slope,
+            dropout = self.dropout, bias = bias)
             for _ in range(num_layers-2)] + \
-            [GATConv(mult_factor*hidden_dim, output_dim, heads = heads, concat = False, 
-            negative_slope = negative_slope, 
+            [GATConv(mult_factor*hidden_dim, output_dim, heads = heads, concat = False,
+            negative_slope = negative_slope,
             dropout = self.dropout, bias = bias)]
 
         self.convs = nn.ModuleList(conv_layers)
@@ -148,7 +155,7 @@ class GAT(nn.Module):
         # Building new node embeddings with GCNConv layers
         for k in range(len(self.convs)-1):
             x = self.convs[k](x, adj_t)
-            
+
             x = self.bns[k](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
@@ -172,7 +179,7 @@ def get_model(model_name: str) -> type:
 
 
 ################
-# Predictors 
+# Predictors
 ################
 
 class LinkPredictor(torch.nn.Module):
