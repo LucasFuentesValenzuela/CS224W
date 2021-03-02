@@ -117,3 +117,8 @@ def add_test_args(parser: argparse.ArgumentParser) -> None:
         default=66745,
         help='mini-batch size',
     )
+    parser.add_argument(
+        '--use_valid_graph',
+        action='store_true',
+        help='Use the valid graph for everything.',
+    )

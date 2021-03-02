@@ -126,10 +126,13 @@ def main():
     test_graph = model_utils.initialize_embeddings(test_graph, 'test_embeddings.pt', args.refresh_embeddings)
     valid_graph = model_utils.initialize_embeddings(valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
 
+
     graphs = {
         'test': test_graph,
         'validation': valid_graph,
     }
+    if args.use_valid_graph:
+        graphs['test'] = valid_graph
 
     # Initialize a model
     model = models.get_model(args.model)(test_graph.x.shape)
