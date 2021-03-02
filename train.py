@@ -214,9 +214,11 @@ def main():
     # Load dataset from disk
     print('Loading train data...')
     train_graph, valid_graph, train_edges, eval_edges, valid_edges = model_utils.load_training_data()
+    if args.train_full_graph:
+        train_edges['edge'] = eval_edges['edge']
+
     train_dl = data.DataLoader(
-        data.TensorDataset(eval_edges['edge']),
-        # data.TensorDataset(train_edges['edge']),
+        data.TensorDataset(train_edges['edge']),
         batch_size=args.train_batch_size,
         shuffle=True,
     )
@@ -233,6 +235,8 @@ def main():
     print('Computing initial embeddings')
     train_graph = model_utils.initialize_embeddings(train_graph, 'train_embeddings.pt', args.refresh_embeddings)
     valid_graph = model_utils.initialize_embeddings(valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
+    if args.train_full_graph:
+        train_graph = valid_graph
 
     # Stats evaluator
     evaluator = Evaluator(name='ogbl-ddi')

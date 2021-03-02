@@ -77,6 +77,11 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
         action='store_true',
         help='Use this flag to avoid learning rate scheduling.',
     )
+    parser.add_argument(
+        '--train_full_graph',
+        action='store_true',
+        help='Use this flag to sample positive edges from the whole graph during training',
+    )
 
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
