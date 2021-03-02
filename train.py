@@ -93,6 +93,7 @@ def train_model(
             del edge_index
             del x
 
+            # Training set evaluation Hits@K Metrics
             pos_pred = torch.cat(pos_pred, dim=0)
             neg_pred = torch.cat(neg_pred, dim=0)
             results = {}
@@ -160,6 +161,7 @@ def train_model(
             del edge_index
             del x
 
+            # Validation evaluation Hits@K Metrics
             pos_pred = torch.cat(pos_pred, dim=0)
             neg_pred = torch.cat(neg_pred, dim=0)
             results = {}
@@ -211,9 +213,10 @@ def main():
 
     # Load dataset from disk
     print('Loading train data...')
-    train_graph, valid_graph, eval_edges, valid_edges = model_utils.load_training_data()
+    train_graph, valid_graph, train_edges, eval_edges, valid_edges = model_utils.load_training_data()
     train_dl = data.DataLoader(
         data.TensorDataset(eval_edges['edge']),
+        # data.TensorDataset(train_edges['edge']),
         batch_size=args.train_batch_size,
         shuffle=True,
     )

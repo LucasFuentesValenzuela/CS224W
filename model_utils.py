@@ -33,12 +33,14 @@ def load_training_data() -> Tuple[
     pyg.data.Data,
     pyg.data.Data,
     Dict[str, torch.Tensor],
+    Dict[str, torch.Tensor],
     Dict[str, torch.Tensor]
 ]:
     '''
     Returns Tuple
         train_graph Graph containing a subset of the training edges
         valid_graph Graph containing all training edges
+        train_edges Dict of positive edges across entire train split
         eval_edges Dict of positive edges from the training edges set that aren't in eval_graph
         valid_edges Dict of positive and negative edges not in train_graph.
     '''
@@ -63,7 +65,7 @@ def load_training_data() -> Tuple[
     train_graph = transform(train_graph)
     valid_graph = transform(valid_graph)
 
-    return train_graph, valid_graph, eval_edges, valid_edges
+    return train_graph, valid_graph, train_edges, eval_edges, valid_edges
 
 
 def load_test_data() -> Tuple[
