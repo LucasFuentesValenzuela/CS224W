@@ -49,7 +49,6 @@ def train_model(
             edge_index = train_graph.edge_index.to(device)
             x = train_graph.x.to(device)
 
-            accuracy = 0
             pos_pred = []
             neg_pred = []
 
@@ -64,7 +63,7 @@ def train_model(
 
                 # Forward pass on model
                 optimizer.zero_grad()
-                y_pred = model(x, adj_t, torch.cat([y_pos_edges, y_neg_edges], dim=1))
+                y_pred = model(adj_t, torch.cat([y_pos_edges, y_neg_edges], dim=1))
                 loss = loss_fn(y_pred, y_batch)
 
                 # Backward pass and optimization
@@ -74,13 +73,12 @@ def train_model(
                     lr_scheduler.step(loss)
 
                 batch_acc = torch.mean(1 - torch.abs(y_batch.detach() - torch.round(y_pred.detach()))).item()
-                accuracy = 0.9 * accuracy + 0.1 * batch_acc
 
                 pos_pred += [y_pred[y_batch == 1].detach()]
                 neg_pred += [y_pred[y_batch == 0].detach()]
 
                 progress_bar.update(y_pos_edges.shape[1])
-                progress_bar.set_postfix(loss=loss.item(), acc=accuracy)
+                progress_bar.set_postfix(loss=loss.item(), acc=batch_acc)
                 writer.add_scalar("train/Loss", loss, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
                 writer.add_scalar("train/Accuracy", batch_acc, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
 
@@ -134,7 +132,7 @@ def train_model(
                 y_batch = y_batch.to(device)
 
                 # Forward pass on model in validation environment
-                y_pred = model(x, adj_t, edges_batch)
+                y_pred = model(adj_t, edges_batch)
                 loss = val_loss_fn(y_pred, y_batch)
 
                 num_samples_processed += edges_batch.shape[1]
@@ -214,7 +212,7 @@ def main():
     # Load dataset from disk
     print('Loading train data...')
     train_graph, valid_graph, train_edges, eval_edges, valid_edges = model_utils.load_training_data()
-    if not args.train_full_graph:
+    if args.train_partial_graph:
         train_edges['edge'] = eval_edges['edge']
 
     train_dl = data.DataLoader(
@@ -235,7 +233,7 @@ def main():
     print('Computing initial embeddings')
     train_graph = model_utils.initialize_embeddings(train_graph, 'train_embeddings.pt', args.refresh_embeddings)
     valid_graph = model_utils.initialize_embeddings(valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
-    if args.train_full_graph:
+    if not args.train_partial_graph:
         train_graph = valid_graph
 
     # Stats evaluator

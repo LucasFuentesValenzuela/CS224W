@@ -78,7 +78,7 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
         help='Use this flag to avoid learning rate scheduling.',
     )
     parser.add_argument(
-        '--train_full_graph',
+        '--train_partial_graph',
         action='store_true',
         help='Use this flag to sample positive edges from the whole graph during training',
     )
@@ -118,7 +118,7 @@ def add_test_args(parser: argparse.ArgumentParser) -> None:
         help='mini-batch size',
     )
     parser.add_argument(
-        '--use_valid_graph',
+        '--dont_use_valid_graph',
         action='store_true',
         help='Use the valid graph for everything.',
     )

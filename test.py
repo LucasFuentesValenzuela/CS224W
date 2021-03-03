@@ -49,7 +49,7 @@ def test_model(
                 y_batch = y_batch.to(device)
 
                 # Forward pass on model
-                y_pred = model(x, adj_t, edges_batch)
+                y_pred = model(adj_t, edges_batch)
 
                 # TODO: Process y_pred in the optimal way (round it off, etc)
 
@@ -131,7 +131,7 @@ def main():
         'test': test_graph,
         'validation': valid_graph,
     }
-    if args.use_valid_graph:
+    if not args.dont_use_valid_graph:
         graphs['test'] = valid_graph
 
     # Initialize a model

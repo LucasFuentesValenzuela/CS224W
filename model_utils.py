@@ -163,7 +163,7 @@ def l2_norm_loss(input: torch.Tensor, pos_target: torch.Tensor) -> torch.Tensor:
 
 def verify_versions() -> None:
     # Version 1.5.0 has a bug where certain type annotations don't pass typecheck
-    assert torch.__version__ == '1.7.1', 'Incorrect torch version installed!'
+    assert torch.__version__.startswith('1.7.1'), 'Incorrect torch version installed!'
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)

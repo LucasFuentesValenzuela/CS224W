@@ -18,20 +18,22 @@ class GCN(nn.Module):
         output_dim=256,
         num_layers=2,
         dropout=0.5,
+        cache=True,
     ):
         super().__init__()
 
         # architecture
-        input_dim = embedding_shape[1]
         self.dropout = dropout
 
         # layers
         self.embedding = nn.Embedding(
-            embedding_shape[0], embedding_dim - input_dim)
+            embedding_shape[0], embedding_dim)
 
-        conv_layers = [GCNConv(embedding_dim, hidden_dim)] + \
-            [GCNConv(hidden_dim, hidden_dim) for _ in range(num_layers-2)] + \
-            [GCNConv(hidden_dim, output_dim)]
+        nn.init.xavier_uniform_(self.embedding.weight)
+
+        conv_layers = [GCNConv(embedding_dim, hidden_dim, cached=cache)] + \
+            [GCNConv(hidden_dim, hidden_dim, cached=cache) for _ in range(num_layers-2)] + \
+            [GCNConv(hidden_dim, output_dim, cached=cache)]
         self.convs = nn.ModuleList(conv_layers)
 
         bns_layers = [nn.BatchNorm1d(num_features=hidden_dim)
@@ -47,10 +49,9 @@ class GCN(nn.Module):
         for bn in self.bns:
             bn.reset_parameters()
 
-    def forward(self, x: torch.Tensor, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
         Inputs:
-            x: Tensor shape (num_nodes, input_dim)
             adj_t: SparseTensor shape (num_nodes, num_nodes)
             edges: Tensor shape (2, num_query_edges)
         Outputs:
@@ -59,12 +60,12 @@ class GCN(nn.Module):
 
         # Initial embedding lookup
         # shape num_nodes, embedding_dim
-        x = torch.cat([self.embedding.weight, x], dim=1)
+        x = self.embedding.weight
 
         # Building new node embeddings with GCNConv layers
         for k in range(len(self.convs)-1):
             x = self.convs[k](x, adj_t)
-            x = self.bns[k](x)
+            # x = self.bns[k](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.convs[-1](x, adj_t)
@@ -96,7 +97,6 @@ class GAT(nn.Module):
         super().__init__()
 
         # architecture
-        input_dim = embedding_shape[1]
         self.dropout = dropout
 
         # multiplicative factor if multiple heads are used
@@ -107,7 +107,7 @@ class GAT(nn.Module):
 
         # layers
         self.embedding = nn.Embedding(
-            embedding_shape[0], embedding_dim - input_dim)
+            embedding_shape[0], embedding_dim)
 
         #TODO: decide on whether to use concat for other layers than the first one
         conv_layers = [
@@ -138,10 +138,9 @@ class GAT(nn.Module):
         for bn in self.bns:
             bn.reset_parameters()
 
-    def forward(self, x: torch.Tensor, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
         Inputs:
-            x: Tensor shape (num_nodes, input_dim)
             adj_t: SparseTensor shape (num_nodes, num_nodes)
             edges: Tensor shape (2, num_query_edges)
         Outputs:
@@ -150,12 +149,11 @@ class GAT(nn.Module):
 
         # Initial embedding lookup
         # shape num_nodes, embedding_dim
-        x = torch.cat([self.embedding.weight, x], dim=1)
+        x = self.embedding.weight
 
         # Building new node embeddings with GCNConv layers
         for k in range(len(self.convs)-1):
             x = self.convs[k](x, adj_t)
-
             x = self.bns[k](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
