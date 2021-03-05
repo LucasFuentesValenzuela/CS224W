@@ -7,6 +7,8 @@ from typing import Tuple, Optional
 # Some built in PyG layers
 from torch_geometric.nn import GCNConv, GATConv
 
+# TODO: make sure that the MAD predictor is permutation invariant. That is the prediction for (u,v) should
+# be the same as that for (v,u)
 
 # Graph Convolutional Neural Network
 class GCN(nn.Module):
@@ -159,13 +161,7 @@ class GAT(nn.Module):
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.convs[-1](x, adj_t)
 
-        # Decode
-        # source nodes embeddings, shape (num_query_edges, final_embedding_dim)
-        x_s = x[edges[0, :]]
-        # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
-        x_t = x[edges[1, :]]
-
-        return self.predictor(x_s, x_t)
+        return self.predictor(x, edges)
 
 
 def get_model(model_name: str) -> type:
@@ -197,7 +193,18 @@ class LinkPredictor(torch.nn.Module):
         for lin in self.lins:
             lin.reset_parameters()
 
-    def forward(self, x_i, x_j):
+    def forward(self, x, edges):
+        '''
+        x: embeddings
+        edges: 
+        '''
+
+        # Decode
+        # source nodes embeddings, shape (num_query_edges, final_embedding_dim)
+        x_s = x[edges[0, :]]
+        # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
+        x_t = x[edges[1, :]]
+
         x = x_i * x_j
         for lin in self.lins[:-1]:
             x = lin(x)
@@ -205,3 +212,115 @@ class LinkPredictor(torch.nn.Module):
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.lins[-1](x)
         return torch.sigmoid(x).flatten()
+
+class MADpredictor(torch.nn.Module):
+    def __init__(
+        self, 
+        in_channels, 
+        n_nodes,
+        n_heads=4, 
+        n_samples=256, 
+        n_sentinels=8
+        ):
+        '''
+        in_channels: dimensions of the embeddings before prediction
+        n_nodes: number of nodes in the graph
+        n_heads: number of parallel models to run
+        n_samples: number of reference points to sample #TODO: clarify
+        n_sentinels: number of soft sentinels to sample to regularize the softmin function
+        '''
+        self.n_nodes = n_nodes
+        self.n_samples = n_samples
+        self.n_heads = n_heads
+        self.n_sentinels = n_sentinels
+        self.field = nn.Parameter(
+            torch.rand((n_heads, n_nodes, node_feats)))
+
+    def forward(self, embeds, batch_edges):
+        '''
+        embeds: embeddings for all the nodes in the graph (n_heads, n_nodes, n_features)
+        edges: batch of edges to predict
+        '''
+
+        n_batch = batch_edges.shape[0]
+
+        #TODO: make sure it is invariant to permutation!
+        # Actually one way to make it permutation invariant is to 
+        # predict in "both directions", which I think is what they do
+
+        # logits when the source is considered static
+        src_logits, src_diff = build_logits(batch_edges, node_type='source')
+        # logits when the target is considered static
+        tgt_logits, tgt_diff = build_logits(batch_edges, node_type='target')
+
+        # logits now is shape (n_heads, n_batch, 2*n_samples)
+        # the reason there are 2 per sample is that we consider it
+        # once for the src node and once for the tgt node
+        logits = torch.cat((logits1, logits2), dim=2)
+        #dist is shape (n_heads, n_batch, 2*n_samples) (as the feature
+        # dimension has been reduced by the norm operator) 
+        dist = torch.cat((srcdiff, dstdiff), dim=2).norm(dim=3)
+        preds = aggregate_references(logits, dist, n_batch)
+
+        return torch.sigmoid(preds).flatten()
+
+
+        def build_logits(self, batch_edges, node_type = 'source'):
+
+            src_nodes, tgt_nodes = batch_edges.T
+
+            if node_type == 'source':
+                nodes_ = src_nodes
+            elif node_type == 'target':
+                nodes_ = tgt_nodes
+
+            n_batch = batch_edges.shape[0]
+            # Sample reference points 
+            # shape is (self.n_heads, n_batch, self.n_samples)
+            samples = torch.randint(
+            0, self.n_nodes, (self.n_heads, n_batch, self.n_samples))
+            
+            #TODO include what happens when no training
+
+            # Compute (u - u_0)
+            # Notes:
+            # embeds is shape (n_heads, n_nodes, node_feats) 
+            # so embeds[:, src_samples] retrieves the source nodes and their features for all the heads
+            # embeds[:, src_samples] should be shape (n_heads, batch, node_features)
+            #   with unsqueeze, add one dimension. so srcdiff is actually a 4-tensor
+            heads_v = torch.arange(self.n_heads).unsqueeze(1).unsqueeze(2)
+            #diff is shape (n_heads, n_batch, n_samples, n_features)
+            diff = embeds[:, samples].unsqueeze(2) - embeds[heads_v, samples]
+
+            # logits should be shape (n_heads, n_batch, n_samples)
+            logits = (
+            (diff.unsqueeze(3) @ (self.field[:, nodes_].unsqueeze(2).unsqueeze(4))
+            ).squeeze(3).squeeze(3)
+            # + self.uncertainty * self.edge[mid0, dst.unsqueeze(0).unsqueeze(2)]
+            )
+
+            return logits, diff
+
+        def aggregate_references(self, logits, dist, n_batch):
+            '''
+            Aggregate the reference points
+            '''
+
+            # Handling Sentinels
+            # Reminder: sentinels are used to avoid giving too much weight to distant references
+            logits = torch.cat((
+                logits, torch.zeros(self.n_heads, n_batch, self.n_sentinels)
+            ), dim=2)
+            dist = torch.cat((
+                dist, torch.ones(self.n_heads, n_batch, self.n_sentinels)
+            ), dim=2)
+
+            # Softmin
+            softmin_ = (
+                logits.unsqueeze(2) @ torch.softmax(1-dist, dim=2).unsqueeze(3)
+            ).squeeze(2).squeeze(2)
+
+            # return the average over the different heads for prediction
+            return softmin.mean(0)
+
+
