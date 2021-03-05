@@ -6,14 +6,21 @@ import torch_sparse
 from typing import Tuple, Optional
 # Some built in PyG layers
 from torch_geometric.nn import GCNConv, GATConv
+from predictors import LinkPredictor, MADpredictor
+from global_attention_layer import LowRankAttention
 
 # TODO: make sure that the MAD predictor is permutation invariant. That is the prediction for (u,v) should
 # be the same as that for (v,u)
 # TODO: in MAD, are we giving the right edges to the predictor? does it not need access to all edges every time?
 
+def get_model(model_name: str) -> type:
+    models = [GCN, GAT, MAD, GCN_LRGA]
+    for m in models:
+        if m.__name__ == model_name:
+            return m
+    assert False, f'Could not find model {model_name}!'
+
 # Graph Convolutional Neural Network
-
-
 class GCN(nn.Module):
     def __init__(
         self,
@@ -85,8 +92,6 @@ class GCN(nn.Module):
         return self.predictor(x_s, x_t)
 
 # Graph Attention Networks
-
-
 class GAT(nn.Module):
     def __init__(
         self,
@@ -169,7 +174,8 @@ class GAT(nn.Module):
 
         return self.predictor(x, edges)
 
-
+# Memory Adaptive Differential Learning
+# mainly from https://github.com/cf020031308/mad-learning
 class MAD(nn.Module):
     def __init__(
         self,
@@ -207,173 +213,92 @@ class MAD(nn.Module):
         '''
         return self.predictor(self.embeds, edges)
 
-
-def get_model(model_name: str) -> type:
-    models = [GCN, GAT, MAD]
-    for m in models:
-        if m.__name__ == model_name:
-            return m
-    assert False, f'Could not find model {model_name}!'
-
-
-################
-# Predictors
-################
-
-class LinkPredictor(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, num_layers,
-                 dropout):
-        super(LinkPredictor, self).__init__()
-
-        self.lins = torch.nn.ModuleList()
-        self.lins.append(torch.nn.Linear(in_channels, hidden_channels))
-        for _ in range(num_layers - 2):
-            self.lins.append(torch.nn.Linear(hidden_channels, hidden_channels))
-        self.lins.append(torch.nn.Linear(hidden_channels, out_channels))
-
-        self.dropout = dropout
-
     def reset_parameters(self):
-        for lin in self.lins:
-            lin.reset_parameters()
-
-    def forward(self, x, edges):
-        '''
-        x: embeddings
-        edges:
-        '''
-
-        # Decode
-        # source nodes embeddings, shape (num_query_edges, final_embedding_dim)
-        x_s = x[edges[0, :]]
-        # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
-        x_t = x[edges[1, :]]
-
-        x = x_i * x_j
-        for lin in self.lins[:-1]:
-            x = lin(x)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.lins[-1](x)
-        return torch.sigmoid(x).flatten()
+        #TODO: implement? 
+        pass
 
 
-class MADpredictor(torch.nn.Module):
+# Low Rank Global Attention
+# mainly from https://github.com/omri1348/LRGA
+class GCN_LRGA(torch.nn.Module):
     def __init__(
-        self,
-        embedding_dim,
-        n_nodes,
-        n_heads=4,
-        n_samples=256,
-        n_sentinels=8,
-        n_nearest=8
+        self, 
+        embedding_shape: Tuple[int, int],
+        embedding_dim=256,
+        hidden_dim=256,
+        output_dim=256,
+        num_layers=2,
+        dropout=.5, 
+        k=50
         ):
         '''
-        in_channels: dimensions of the embeddings before prediction
-        n_nodes: number of nodes in the graph
-        n_heads: number of parallel models to run
-        n_samples: number of reference points to sample #TODO: clarify
-        n_sentinels: number of soft sentinels to sample to regularize the softmin function
+        k: rank of the low-rank approximation
         '''
         super().__init__()
-        self.n_nodes = n_nodes
-        self.n_samples = n_samples
-        self.n_heads = n_heads
-        self.n_sentinels = n_sentinels
-        self.n_nearest = n_nearest
+        self.k = k
+        self.embedding_dim = embedding_shape[0]
+        self.hidden_dim = hidden_dim
+        self.out_dim = output_dim
+        self.num_layers = num_layers
 
-        self.field = nn.Parameter(
-            torch.rand((n_heads, n_nodes, embedding_dim)))
+        self.embedding = nn.Embedding(
+            embedding_shape[0], embedding_dim)
 
-    def forward(self, embeds, batch_edges):
-        '''
-        embeds: embeddings for all the nodes in the graph (n_heads, n_nodes, n_features)
-        edges: batch of edges to predict
-        '''
-        n_batch = batch_edges.shape[1]
+        # convolutional layers
+        self.convs = torch.nn.ModuleList()
+        self.convs.append(GCNConv(embedding_dim, hidden_dim))
+        # attention layer
+        self.attention = torch.nn.ModuleList()
+        self.attention.append(LowRankAttention(self.k, embedding_dim, dropout))
+        # dimension_reduce #TODO: clarify
+        self.dimension_reduce = torch.nn.ModuleList()
+        self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,\
+        hidden_dim),nn.ReLU()))
+        # batch normalization layers
+        self.bn = nn.ModuleList([nn.BatchNorm1d(hidden_dim) for _ in range(num_layers-1)])      
 
-        # TODO: make sure it is invariant to permutation!
-        # Actually one way to make it permutation invariant is to
-        # predict in "both directions", which I think is what they do
+        for _ in range(num_layers - 1):
+            self.convs.append(GCNConv(hidden_dim, hidden_dim))
+            self.attention.append(LowRankAttention(self.k,hidden_dim, dropout))
+            self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,\
+            hidden_dim)))
+        self.dimension_reduce[-1] = nn.Sequential(nn.Linear(2*self.k + hidden_dim,\
+            output_dim))
+        self.dropout = dropout
 
-        # logits when the source is considered static
-        src_logits, src_diff = self.build_logits(
-            embeds, batch_edges, node_type='source')
-        # logits when the target is considered static
-        tgt_logits, tgt_diff = self.build_logits(
-            embeds, batch_edges, node_type='target')
+        self.predictor = LinkPredictor(
+            self.out_dim, self.hidden_dim, 1, self.num_layers, self.dropout)
 
-        # logits now is shape (n_heads, n_batch, 2*n_samples)
-        # the reason there are 2 per sample is that we consider it
-        # once for the src node and once for the tgt node
-        logits = torch.cat((src_logits, tgt_logits), dim=2)
-        # dist is shape (n_heads, n_batch, 2*n_samples) (as the feature
-        # dimension has been reduced by the norm operator)
-        dist = torch.cat((src_diff, tgt_diff), dim=2).norm(dim=3)
-        preds = self.aggregate_references(logits, dist, n_batch)
-        return torch.sigmoid(preds).flatten()
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+        for glob_attention in self.attention:
+            glob_attention.apply(weight_init)
+        for dim_reduce in self.dimension_reduce:
+            dim_reduce.apply(weight_init)
+        for batch_norm in self.bn:
+            batch_norm.reset_parameters()
 
-    def aggregate_references(self, logits, dist, n_batch):
-        '''
-        Aggregate the reference points
-        '''
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
 
-        # Handling Sentinels
-        # Reminder: sentinels are used to avoid giving too much weight to distant references
-        logits=torch.cat((
-            logits, torch.zeros(self.n_heads, n_batch, self.n_sentinels)
-        ), dim = 2)
-        dist=torch.cat((
-            dist, torch.ones(self.n_heads, n_batch, self.n_sentinels)
-        ), dim = 2)
+        # Initial embedding lookup
+        # shape num_nodes, embedding_dim
+        x = self.embedding.weight
 
-        # Softmin
-        softmin_=(
-            logits.unsqueeze(2) @ torch.softmax(1-dist, dim=2).unsqueeze(3)
-        ).squeeze(2).squeeze(2)
+        #TODO: make sure to understand all the steps here
+        for i, conv in enumerate(self.convs[:-1]):
+            x_local = F.relu(conv(x, adj_t))
+            x_local = F.dropout(x_local, p=self.dropout, training=self.training)
+            x_global = self.attention[i](x)
+            x = self.dimension_reduce[i](torch.cat((x_global, x_local),dim=1))
+            x = F.relu(x)
+            x = self.bn[i](x)
+        x_local = F.relu(self.convs[-1](x, adj_t))
+        x_local = F.dropout(x_local, p=self.dropout, training=self.training)
+        x_global = self.attention[-1](x)
+        x = self.dimension_reduce[-1](torch.cat((x_global, x_local),dim=1))
 
-        # return the average over the different heads for prediction
-        return softmin_.mean(0)
+        return self.predictor(x, edges)
 
-    def build_logits(self, embeds, batch_edges, node_type='source'):
 
-        src_nodes, tgt_nodes = batch_edges[0, :].T, batch_edges[1, :].T
-
-        if node_type == 'source':
-            nodes_ = src_nodes
-        elif node_type == 'target':
-            nodes_ = tgt_nodes
-
-        n_batch = batch_edges.shape[1]
-        # Sample reference points
-        # shape is (self.n_heads, n_batch, self.n_samples)
-        samples = torch.randint(
-        0, self.n_nodes, (self.n_heads, n_batch, self.n_samples))
-
-        # TODO include what happens when no training
-        if self.n_nearest and not self.training:
-            # Grab closest pos vectors during test time, rather than using random ones
-            samples = (
-                embeds[:, nodes_].unsqueeze(2) - embeds.unsqueeze(1)
-            ).norm(dim=3).topk(1+self.n_nearest, largest=False).indices[:, :, 1:]
-            
-
-        # Compute (u - u_0)
-        # Notes:
-        # embeds is shape (n_heads, n_nodes, node_feats)
-        # so embeds[:, src_samples] retrieves the source nodes and their features for all the heads
-        # embeds[:, src_samples] should be shape (n_heads, batch, node_features)
-        #   with unsqueeze, add one dimension. so srcdiff is actually a 4-tensor
-        heads_v=torch.arange(self.n_heads).unsqueeze(1).unsqueeze(2)
-        # diff is shape (n_heads, n_batch, n_samples, n_features)
-        diff=embeds[:, nodes_].unsqueeze(2) - embeds[heads_v, samples]
-
-        # logits should be shape (n_heads, n_batch, n_samples)
-        logits=(
-        (diff.unsqueeze(3) @ (self.field[:, nodes_].unsqueeze(2).unsqueeze(4))
-        ).squeeze(3).squeeze(3)
-        # + self.uncertainty * self.edge[mid0, dst.unsqueeze(0).unsqueeze(2)]#TODO: handle this uncertainty term
-        )
-
-        return logits, diff
 
