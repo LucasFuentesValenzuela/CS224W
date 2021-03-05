@@ -7,7 +7,7 @@ from typing import Tuple, Optional
 # Some built in PyG layers
 from torch_geometric.nn import GCNConv, GATConv
 from predictors import LinkPredictor, MADpredictor
-from global_attention_layer import LowRankAttention
+from global_attention_layer import LowRankAttention, weight_init
 
 # TODO: make sure that the MAD predictor is permutation invariant. That is the prediction for (u,v) should
 # be the same as that for (v,u)
@@ -214,7 +214,7 @@ class MAD(nn.Module):
         return self.predictor(self.embeds, edges)
 
     def reset_parameters(self):
-        #TODO: implement? 
+        #TODO: implement?
         pass
 
 
@@ -222,14 +222,15 @@ class MAD(nn.Module):
 # mainly from https://github.com/omri1348/LRGA
 class GCN_LRGA(torch.nn.Module):
     def __init__(
-        self, 
+        self,
         embedding_shape: Tuple[int, int],
         embedding_dim=256,
         hidden_dim=256,
         output_dim=256,
         num_layers=2,
-        dropout=.5, 
-        k=50
+        dropout=.5,
+        k=50,
+        cache=True,
         ):
         '''
         k: rank of the low-rank approximation
@@ -246,7 +247,7 @@ class GCN_LRGA(torch.nn.Module):
 
         # convolutional layers
         self.convs = torch.nn.ModuleList()
-        self.convs.append(GCNConv(embedding_dim, hidden_dim))
+        self.convs.append(GCNConv(embedding_dim, hidden_dim, cached=cache))
         # attention layer
         self.attention = torch.nn.ModuleList()
         self.attention.append(LowRankAttention(self.k, embedding_dim, dropout))
@@ -255,10 +256,10 @@ class GCN_LRGA(torch.nn.Module):
         self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,\
         hidden_dim),nn.ReLU()))
         # batch normalization layers
-        self.bn = nn.ModuleList([nn.BatchNorm1d(hidden_dim) for _ in range(num_layers-1)])      
+        self.bn = nn.ModuleList([nn.BatchNorm1d(hidden_dim) for _ in range(num_layers-1)])
 
         for _ in range(num_layers - 1):
-            self.convs.append(GCNConv(hidden_dim, hidden_dim))
+            self.convs.append(GCNConv(hidden_dim, hidden_dim, cached=cache))
             self.attention.append(LowRankAttention(self.k,hidden_dim, dropout))
             self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,\
             hidden_dim)))

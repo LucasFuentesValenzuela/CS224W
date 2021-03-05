@@ -141,7 +141,6 @@ class MADpredictor(torch.nn.Module):
             samples = (
                 embeds[:, nodes_].unsqueeze(2) - embeds.unsqueeze(1)
             ).norm(dim=3).topk(1+self.n_nearest, largest=False).indices[:, :, 1:]
-            
 
         # Compute (u - u_0)
         # Notes:
