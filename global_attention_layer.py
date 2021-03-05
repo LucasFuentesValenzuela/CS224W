@@ -10,7 +10,7 @@ import numpy as np
 def joint_normalize2(U, V_T):
     # U and V_T are in block diagonal form
     # tmp_ones = torch.ones((V_T.shape[1],1)).to(torch.device('cuda'))
-    tmp_ones = torch.ones((V_T.shape[1],1))
+    tmp_ones = torch.ones((V_T.shape[1],1), device=V_T.device)
     norm_factor = torch.mm(U,torch.mm(V_T,tmp_ones))
     norm_factor = (torch.sum(norm_factor) / U.shape[0]) + 1e-6
     return 1/norm_factor
@@ -40,7 +40,7 @@ class LowRankAttention(nn.Module):
         T = tmp[:,3*self.k:]
         V_T = torch.t(V)
         # normalization
-        D = joint_normalize2(U, V_T) 
+        D = joint_normalize2(U, V_T)
         res = torch.mm(U, torch.mm(V_T, Z))
         res = torch.cat((res*D,T),dim=1)
         return self.dropout(res)
