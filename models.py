@@ -9,8 +9,11 @@ from torch_geometric.nn import GCNConv, GATConv
 
 # TODO: make sure that the MAD predictor is permutation invariant. That is the prediction for (u,v) should
 # be the same as that for (v,u)
+# TODO: in MAD, are we giving the right edges to the predictor? does it not need access to all edges every time?
 
 # Graph Convolutional Neural Network
+
+
 class GCN(nn.Module):
     def __init__(
         self,
@@ -42,8 +45,9 @@ class GCN(nn.Module):
                       for _ in range(num_layers)]
         self.bns = nn.ModuleList(bns_layers)
 
-        #predictor
-        self.predictor = LinkPredictor(output_dim, hidden_dim, 1, num_layers, self.dropout)
+        # predictor
+        self.predictor = LinkPredictor(
+            output_dim, hidden_dim, 1, num_layers, self.dropout)
 
     def reset_parameters(self):
         for conv in self.convs:
@@ -82,6 +86,7 @@ class GCN(nn.Module):
 
 # Graph Attention Networks
 
+
 class GAT(nn.Module):
     def __init__(
         self,
@@ -111,19 +116,19 @@ class GAT(nn.Module):
         self.embedding = nn.Embedding(
             embedding_shape[0], embedding_dim)
 
-        #TODO: decide on whether to use concat for other layers than the first one
+        # TODO: decide on whether to use concat for other layers than the first one
         conv_layers = [
             GATConv(embedding_dim, hidden_dim,
-            heads = heads, concat = concat, negative_slope = negative_slope,
-            dropout = self.dropout, bias = bias)
+            heads=heads, concat=concat, negative_slope=negative_slope,
+            dropout=self.dropout, bias=bias)
             ] + \
-            [GATConv(mult_factor*hidden_dim, mult_factor*hidden_dim, heads = heads,
-            concat = False, negative_slope = negative_slope,
-            dropout = self.dropout, bias = bias)
+            [GATConv(mult_factor*hidden_dim, mult_factor*hidden_dim, heads=heads,
+            concat=False, negative_slope=negative_slope,
+            dropout=self.dropout, bias=bias)
             for _ in range(num_layers-2)] + \
-            [GATConv(mult_factor*hidden_dim, output_dim, heads = heads, concat = False,
-            negative_slope = negative_slope,
-            dropout = self.dropout, bias = bias)]
+            [GATConv(mult_factor*hidden_dim, output_dim, heads=heads, concat=False,
+            negative_slope=negative_slope,
+            dropout=self.dropout, bias=bias)]
 
         self.convs = nn.ModuleList(conv_layers)
 
@@ -131,8 +136,9 @@ class GAT(nn.Module):
                       for _ in range(num_layers)]
         self.bns = nn.ModuleList(bns_layers)
 
-        #predictor
-        self.predictor = LinkPredictor(output_dim, hidden_dim, 1, num_layers, self.dropout)
+        # predictor
+        self.predictor = LinkPredictor(
+            output_dim, hidden_dim, 1, num_layers, self.dropout)
 
     def reset_parameters(self):
         for conv in self.convs:
@@ -164,8 +170,46 @@ class GAT(nn.Module):
         return self.predictor(x, edges)
 
 
+class MAD(nn.Module):
+    def __init__(
+        self,
+        embedding_shape: Tuple[int, int],
+        embedding_dim=32,
+        n_heads=4,
+        n_samples=64,
+        n_sentinels=8,
+        n_nearest=8
+        ):
+
+        super().__init__()
+        self.n_nodes = embedding_shape[0]
+        self.n_samples = n_samples
+        self.n_heads = n_heads
+        self.n_sentinels = n_sentinels
+        self.n_nearest = n_nearest
+
+        self.embeds = nn.Parameter(
+            torch.rand((self.n_heads, self.n_nodes, embedding_dim)))
+
+        # self.uncertainty #TODO: figure it out
+        self.predictor = MADpredictor(
+            embedding_dim, self.n_nodes, n_heads=self.n_heads,
+            n_samples=self.n_samples, n_sentinels=self.n_sentinels,
+            n_nearest=self.n_nearest)
+
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+        '''
+        Inputs:
+            adj_t: SparseTensor shape (num_nodes, num_nodes)
+            edges: Tensor shape (2, num_query_edges)
+        Outputs:
+            prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
+        '''
+        return self.predictor(self.embeds, edges)
+
+
 def get_model(model_name: str) -> type:
-    models = [GCN, GAT]
+    models = [GCN, GAT, MAD]
     for m in models:
         if m.__name__ == model_name:
             return m
@@ -196,7 +240,7 @@ class LinkPredictor(torch.nn.Module):
     def forward(self, x, edges):
         '''
         x: embeddings
-        edges: 
+        edges:
         '''
 
         # Decode
@@ -213,14 +257,16 @@ class LinkPredictor(torch.nn.Module):
         x = self.lins[-1](x)
         return torch.sigmoid(x).flatten()
 
+
 class MADpredictor(torch.nn.Module):
     def __init__(
-        self, 
-        in_channels, 
+        self,
+        embedding_dim,
         n_nodes,
-        n_heads=4, 
-        n_samples=256, 
-        n_sentinels=8
+        n_heads=4,
+        n_samples=256,
+        n_sentinels=8,
+        n_nearest=8
         ):
         '''
         in_channels: dimensions of the embeddings before prediction
@@ -229,98 +275,105 @@ class MADpredictor(torch.nn.Module):
         n_samples: number of reference points to sample #TODO: clarify
         n_sentinels: number of soft sentinels to sample to regularize the softmin function
         '''
+        super().__init__()
         self.n_nodes = n_nodes
         self.n_samples = n_samples
         self.n_heads = n_heads
         self.n_sentinels = n_sentinels
+        self.n_nearest = n_nearest
+
         self.field = nn.Parameter(
-            torch.rand((n_heads, n_nodes, node_feats)))
+            torch.rand((n_heads, n_nodes, embedding_dim)))
 
     def forward(self, embeds, batch_edges):
         '''
         embeds: embeddings for all the nodes in the graph (n_heads, n_nodes, n_features)
         edges: batch of edges to predict
         '''
+        n_batch = batch_edges.shape[1]
 
-        n_batch = batch_edges.shape[0]
-
-        #TODO: make sure it is invariant to permutation!
-        # Actually one way to make it permutation invariant is to 
+        # TODO: make sure it is invariant to permutation!
+        # Actually one way to make it permutation invariant is to
         # predict in "both directions", which I think is what they do
 
         # logits when the source is considered static
-        src_logits, src_diff = build_logits(batch_edges, node_type='source')
+        src_logits, src_diff = self.build_logits(
+            embeds, batch_edges, node_type='source')
         # logits when the target is considered static
-        tgt_logits, tgt_diff = build_logits(batch_edges, node_type='target')
+        tgt_logits, tgt_diff = self.build_logits(
+            embeds, batch_edges, node_type='target')
 
         # logits now is shape (n_heads, n_batch, 2*n_samples)
         # the reason there are 2 per sample is that we consider it
         # once for the src node and once for the tgt node
-        logits = torch.cat((logits1, logits2), dim=2)
-        #dist is shape (n_heads, n_batch, 2*n_samples) (as the feature
-        # dimension has been reduced by the norm operator) 
-        dist = torch.cat((srcdiff, dstdiff), dim=2).norm(dim=3)
-        preds = aggregate_references(logits, dist, n_batch)
-
+        logits = torch.cat((src_logits, tgt_logits), dim=2)
+        # dist is shape (n_heads, n_batch, 2*n_samples) (as the feature
+        # dimension has been reduced by the norm operator)
+        dist = torch.cat((src_diff, tgt_diff), dim=2).norm(dim=3)
+        preds = self.aggregate_references(logits, dist, n_batch)
         return torch.sigmoid(preds).flatten()
 
+    def aggregate_references(self, logits, dist, n_batch):
+        '''
+        Aggregate the reference points
+        '''
 
-        def build_logits(self, batch_edges, node_type = 'source'):
+        # Handling Sentinels
+        # Reminder: sentinels are used to avoid giving too much weight to distant references
+        logits=torch.cat((
+            logits, torch.zeros(self.n_heads, n_batch, self.n_sentinels)
+        ), dim = 2)
+        dist=torch.cat((
+            dist, torch.ones(self.n_heads, n_batch, self.n_sentinels)
+        ), dim = 2)
 
-            src_nodes, tgt_nodes = batch_edges.T
+        # Softmin
+        softmin_=(
+            logits.unsqueeze(2) @ torch.softmax(1-dist, dim=2).unsqueeze(3)
+        ).squeeze(2).squeeze(2)
 
-            if node_type == 'source':
-                nodes_ = src_nodes
-            elif node_type == 'target':
-                nodes_ = tgt_nodes
+        # return the average over the different heads for prediction
+        return softmin_.mean(0)
 
-            n_batch = batch_edges.shape[0]
-            # Sample reference points 
-            # shape is (self.n_heads, n_batch, self.n_samples)
-            samples = torch.randint(
-            0, self.n_nodes, (self.n_heads, n_batch, self.n_samples))
+    def build_logits(self, embeds, batch_edges, node_type='source'):
+
+        src_nodes, tgt_nodes = batch_edges[0, :].T, batch_edges[1, :].T
+
+        if node_type == 'source':
+            nodes_ = src_nodes
+        elif node_type == 'target':
+            nodes_ = tgt_nodes
+
+        n_batch = batch_edges.shape[1]
+        # Sample reference points
+        # shape is (self.n_heads, n_batch, self.n_samples)
+        samples = torch.randint(
+        0, self.n_nodes, (self.n_heads, n_batch, self.n_samples))
+
+        # TODO include what happens when no training
+        if self.n_nearest and not self.training:
+            # Grab closest pos vectors during test time, rather than using random ones
+            samples = (
+                embeds[:, nodes_].unsqueeze(2) - embeds.unsqueeze(1)
+            ).norm(dim=3).topk(1+self.n_nearest, largest=False).indices[:, :, 1:]
             
-            #TODO include what happens when no training
 
-            # Compute (u - u_0)
-            # Notes:
-            # embeds is shape (n_heads, n_nodes, node_feats) 
-            # so embeds[:, src_samples] retrieves the source nodes and their features for all the heads
-            # embeds[:, src_samples] should be shape (n_heads, batch, node_features)
-            #   with unsqueeze, add one dimension. so srcdiff is actually a 4-tensor
-            heads_v = torch.arange(self.n_heads).unsqueeze(1).unsqueeze(2)
-            #diff is shape (n_heads, n_batch, n_samples, n_features)
-            diff = embeds[:, samples].unsqueeze(2) - embeds[heads_v, samples]
+        # Compute (u - u_0)
+        # Notes:
+        # embeds is shape (n_heads, n_nodes, node_feats)
+        # so embeds[:, src_samples] retrieves the source nodes and their features for all the heads
+        # embeds[:, src_samples] should be shape (n_heads, batch, node_features)
+        #   with unsqueeze, add one dimension. so srcdiff is actually a 4-tensor
+        heads_v=torch.arange(self.n_heads).unsqueeze(1).unsqueeze(2)
+        # diff is shape (n_heads, n_batch, n_samples, n_features)
+        diff=embeds[:, nodes_].unsqueeze(2) - embeds[heads_v, samples]
 
-            # logits should be shape (n_heads, n_batch, n_samples)
-            logits = (
-            (diff.unsqueeze(3) @ (self.field[:, nodes_].unsqueeze(2).unsqueeze(4))
-            ).squeeze(3).squeeze(3)
-            # + self.uncertainty * self.edge[mid0, dst.unsqueeze(0).unsqueeze(2)]
-            )
+        # logits should be shape (n_heads, n_batch, n_samples)
+        logits=(
+        (diff.unsqueeze(3) @ (self.field[:, nodes_].unsqueeze(2).unsqueeze(4))
+        ).squeeze(3).squeeze(3)
+        # + self.uncertainty * self.edge[mid0, dst.unsqueeze(0).unsqueeze(2)]#TODO: handle this uncertainty term
+        )
 
-            return logits, diff
-
-        def aggregate_references(self, logits, dist, n_batch):
-            '''
-            Aggregate the reference points
-            '''
-
-            # Handling Sentinels
-            # Reminder: sentinels are used to avoid giving too much weight to distant references
-            logits = torch.cat((
-                logits, torch.zeros(self.n_heads, n_batch, self.n_sentinels)
-            ), dim=2)
-            dist = torch.cat((
-                dist, torch.ones(self.n_heads, n_batch, self.n_sentinels)
-            ), dim=2)
-
-            # Softmin
-            softmin_ = (
-                logits.unsqueeze(2) @ torch.softmax(1-dist, dim=2).unsqueeze(3)
-            ).squeeze(2).squeeze(2)
-
-            # return the average over the different heads for prediction
-            return softmin.mean(0)
-
+        return logits, diff
 

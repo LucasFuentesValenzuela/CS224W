@@ -89,7 +89,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         '--model',
         type=str,
         default='GCN',
-        choices = ['GCN', 'GAT'],
+        choices = ['GCN', 'GAT', 'MAD'],
         help='choose the model to train',
     )
     parser.add_argument(
