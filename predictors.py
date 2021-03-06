@@ -106,10 +106,10 @@ class MADpredictor(torch.nn.Module):
         # Handling Sentinels
         # Reminder: sentinels are used to avoid giving too much weight to distant references
         logits=torch.cat((
-            logits, torch.zeros(self.n_heads, n_batch, self.n_sentinels)
+            logits, torch.zeros((self.n_heads, n_batch, self.n_sentinels), device=dist.device)
         ), dim = 2)
         dist=torch.cat((
-            dist, torch.ones(self.n_heads, n_batch, self.n_sentinels)
+            dist, torch.ones((self.n_heads, n_batch, self.n_sentinels), device=dist.device)
         ), dim = 2)
 
         # Softmin

@@ -180,9 +180,9 @@ class MAD(nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
-        embedding_dim=32,
-        n_heads=4,
-        n_samples=64,
+        embedding_dim=12,
+        n_heads=12,
+        n_samples=8,
         n_sentinels=8,
         n_nearest=8
         ):
