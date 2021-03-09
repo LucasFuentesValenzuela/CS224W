@@ -51,7 +51,7 @@ class MADpredictor(torch.nn.Module):
         n_heads=4,
         n_samples=256,
         n_sentinels=8,
-        n_nearest=8, 
+        n_nearest=8,
         adj_t = None
         ):
         '''
