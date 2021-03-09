@@ -188,6 +188,7 @@ class MAD(nn.Module):
         ):
 
         super().__init__()
+        self.embedding_dim = embedding_dim
         self.n_nodes = embedding_shape[0]
         self.n_samples = n_samples
         self.n_heads = n_heads
@@ -197,11 +198,8 @@ class MAD(nn.Module):
         self.embeds = nn.Parameter(
             torch.rand((self.n_heads, self.n_nodes, embedding_dim)))
 
-        # self.uncertainty #TODO: figure it out
-        self.predictor = MADpredictor(
-            embedding_dim, self.n_nodes, n_heads=self.n_heads,
-            n_samples=self.n_samples, n_sentinels=self.n_sentinels,
-            n_nearest=self.n_nearest)
+        self.predictor = None
+
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
@@ -211,6 +209,14 @@ class MAD(nn.Module):
         Outputs:
             prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
         '''
+
+        #if no predictor instantiated, initialize it
+        if self.predictor is None:
+            self.predictor = MADpredictor(
+            self.embedding_dim, self.n_nodes, n_heads=self.n_heads,
+            n_samples=self.n_samples, n_sentinels=self.n_sentinels,
+            n_nearest=self.n_nearest, adj_t = adj_t)
+
         return self.predictor(self.embeds, edges)
 
     def reset_parameters(self):

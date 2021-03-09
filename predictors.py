@@ -51,7 +51,8 @@ class MADpredictor(torch.nn.Module):
         n_heads=4,
         n_samples=256,
         n_sentinels=8,
-        n_nearest=8
+        n_nearest=8, 
+        adj_t = None
         ):
         '''
         in_channels: dimensions of the embeddings before prediction
@@ -66,7 +67,10 @@ class MADpredictor(torch.nn.Module):
         self.n_heads = n_heads
         self.n_sentinels = n_sentinels
         self.n_nearest = n_nearest
-
+        self.src = adj_t.to_torch_sparse_coo_tensor().coalesce().indices()[0, :]
+        self.dst = adj_t.to_torch_sparse_coo_tensor().coalesce().indices()[1, :]
+        self.adj = adj_t.to_dense()
+        self.uncertainty = nn.Parameter(torch.ones(1,1))
         self.field = nn.Parameter(
             torch.rand((n_heads, n_nodes, embedding_dim)))
 
@@ -76,6 +80,7 @@ class MADpredictor(torch.nn.Module):
         edges: batch of edges to predict
         '''
         n_batch = batch_edges.shape[1]
+        src, dst = batch_edges[0, :], batch_edges[1, :]
 
         # TODO: make sure it is invariant to permutation!
         # Actually one way to make it permutation invariant is to
@@ -152,11 +157,18 @@ class MADpredictor(torch.nn.Module):
         # diff is shape (n_heads, n_batch, n_samples, n_features)
         diff=embeds[:, nodes_].unsqueeze(2) - embeds[heads_v, samples]
 
+        # label
+        if node_type == 'source':
+            label = self.uncertainty * self.adj[samples, nodes_.unsqueeze(0).unsqueeze(2)]
+        elif node_type == 'target':
+            label = self.uncertainty * self.adj[nodes_.unsqueeze(0).unsqueeze(2), samples]
+
+
         # logits should be shape (n_heads, n_batch, n_samples)
         logits=(
         (diff.unsqueeze(3) @ (self.field[:, nodes_].unsqueeze(2).unsqueeze(4))
         ).squeeze(3).squeeze(3)
-        # + self.uncertainty * self.edge[mid0, dst.unsqueeze(0).unsqueeze(2)]#TODO: handle this uncertainty term
+        + label
         )
 
         return logits, diff
