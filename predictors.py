@@ -67,10 +67,8 @@ class MADpredictor(torch.nn.Module):
         self.n_heads = n_heads
         self.n_sentinels = n_sentinels
         self.n_nearest = n_nearest
-        self.src = adj_t.to_torch_sparse_coo_tensor().coalesce().indices()[0, :]
-        self.dst = adj_t.to_torch_sparse_coo_tensor().coalesce().indices()[1, :]
         self.adj = adj_t.to_dense()
-        self.uncertainty = nn.Parameter(torch.ones(1,1))
+        self.uncertainty = nn.Parameter(torch.ones(1,1,1)*5)
         self.field = nn.Parameter(
             torch.rand((n_heads, n_nodes, embedding_dim)))
 
