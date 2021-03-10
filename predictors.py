@@ -131,8 +131,10 @@ class MADpredictor(torch.nn.Module):
 
         if node_type == 'source':
             nodes_ = src_nodes
+            nodes_logits = tgt_nodes
         elif node_type == 'target':
             nodes_ = tgt_nodes
+            nodes_logits = src_nodes
 
         n_batch = batch_edges.shape[1]
         # Sample reference points
@@ -166,7 +168,7 @@ class MADpredictor(torch.nn.Module):
 
         # logits should be shape (n_heads, n_batch, n_samples)
         logits=(
-        (diff.unsqueeze(3) @ (self.field[:, nodes_].unsqueeze(2).unsqueeze(4))
+        (diff.unsqueeze(3) @ (self.field[:, nodes_logits].unsqueeze(2).unsqueeze(4))
         ).squeeze(3).squeeze(3)
         + label
         )
