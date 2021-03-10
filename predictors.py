@@ -159,9 +159,9 @@ class MADpredictor(torch.nn.Module):
 
         # label
         if node_type == 'source':
-            label = self.uncertainty * self.adj[samples, nodes_.unsqueeze(0).unsqueeze(2)]
+            label = self.uncertainty * (self.adj[samples, nodes_.unsqueeze(0).unsqueeze(2)] * 2 - 1)
         elif node_type == 'target':
-            label = self.uncertainty * self.adj[nodes_.unsqueeze(0).unsqueeze(2), samples]
+            label = self.uncertainty * (self.adj[nodes_.unsqueeze(0).unsqueeze(2), samples] * 2 - 1)
 
 
         # logits should be shape (n_heads, n_batch, n_samples)
