@@ -215,7 +215,7 @@ class MAD(nn.Module):
             self.predictor = MADpredictor(
             self.embedding_dim, self.n_nodes, n_heads=self.n_heads,
             n_samples=self.n_samples, n_sentinels=self.n_sentinels,
-            n_nearest=self.n_nearest, adj_t = adj_t).to(adj_t.device)
+            n_nearest=self.n_nearest, adj_t = adj_t).to(edges.device)
 
         return self.predictor(self.embeds, edges)
 
