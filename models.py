@@ -218,7 +218,7 @@ class MAD(nn.Module):
         # TODO: implement?
         pass
 
-# Combination of MAD and GCN-learned embeddings 
+# Combination of MAD and GCN-learned embeddings
 class MAD_GCN(nn.Module):
     def __init__(
         self,
@@ -281,13 +281,10 @@ class MAD_GCN(nn.Module):
             x = self.convs[k](x, adj_t)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, adj_t)
+        x = self.convs[-1](x, adj_t) # shape (n_nodes, output_dim * n_heads)
 
-        # shape (n_heads, n_nodes, output_dim)
-        x = torch.transpose(
-            torch.reshape(x.T, (self.n_heads, self.output_dim, self.n_nodes)), 
-            1, 2
-        )
+        x = torch.reshape(x, (self.n_nodes, self.output_dim, self.n_heads))
+        x = x.permute(2, 0, 1) # shape (n_heads, n_nodes, output_dim)
 
         return self.predictor(x, edges)
 
