@@ -28,7 +28,7 @@ class GCN(nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
-        adj_t,
+        adj_t: torch_sparse.SparseTensor,
         embedding_dim=256,
         hidden_dim=256,
         output_dim=256,
@@ -102,7 +102,7 @@ class GAT(nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
-        adj_t,
+        adj_t: torch_sparse.SparseTensor,
         embedding_dim=256,
         hidden_dim=256,
         output_dim=256,
@@ -189,7 +189,7 @@ class MAD(nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
-        adj_t,
+        adj_t: torch_sparse.SparseTensor,
         embedding_dim=12,
         n_heads=12,
         n_samples=8,
@@ -233,7 +233,7 @@ class GCN_LRGA(torch.nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
-        adj_t,
+        adj_t: torch_sparse.SparseTensor,
         embedding_dim=256,
         hidden_dim=256,
         output_dim=256,
