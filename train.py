@@ -7,7 +7,7 @@ from torch import nn
 from torch import optim
 from torch.utils import data
 from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm # type: ignore
+from tqdm import tqdm  # type: ignore
 import torch_geometric as pyg
 from torch_geometric.utils import negative_sampling
 from ogb.linkproppred import Evaluator
@@ -30,8 +30,10 @@ def train_model(
 ) -> nn.Module:
 
     device = model_utils.get_device()
-    loss_fn = nn.functional.binary_cross_entropy # TODO: Set this to the correct loss fn
-    val_loss_fn = nn.functional.binary_cross_entropy # TODO: Set this to the correct loss fn
+    # TODO: Set this to the correct loss fn
+    loss_fn = nn.functional.binary_cross_entropy
+    # TODO: Set this to the correct loss fn
+    val_loss_fn = nn.functional.binary_cross_entropy
     best_val_loss = torch.tensor(float('inf'))
     saved_checkpoints = []
     writer = SummaryWriter(log_dir=f'{args.log_dir}/{args.experiment}')
@@ -59,11 +61,13 @@ def train_model(
                     num_nodes=train_graph.num_nodes,
                     num_neg_samples=y_pos_edges.shape[1]
                 ).to(device)
-                y_batch = torch.cat([torch.ones(y_pos_edges.shape[1]), torch.zeros(y_neg_edges.shape[1])], dim=0).to(device) # Ground truth edge labels (1 or 0)
+                y_batch = torch.cat([torch.ones(y_pos_edges.shape[1]), torch.zeros(
+                    y_neg_edges.shape[1])], dim=0).to(device)  # Ground truth edge labels (1 or 0)
 
                 # Forward pass on model
                 optimizer.zero_grad()
-                y_pred = model(adj_t, torch.cat([y_pos_edges, y_neg_edges], dim=1))
+                y_pred = model(adj_t, torch.cat(
+                    [y_pos_edges, y_neg_edges], dim=1))
                 loss = loss_fn(y_pred, y_batch)
 
                 # Backward pass and optimization
@@ -72,15 +76,18 @@ def train_model(
                 if args.use_scheduler:
                     lr_scheduler.step(loss)
 
-                batch_acc = torch.mean(1 - torch.abs(y_batch.detach() - torch.round(y_pred.detach()))).item()
+                batch_acc = torch.mean(
+                    1 - torch.abs(y_batch.detach() - torch.round(y_pred.detach()))).item()
 
                 pos_pred += [y_pred[y_batch == 1].detach()]
                 neg_pred += [y_pred[y_batch == 0].detach()]
 
                 progress_bar.update(y_pos_edges.shape[1])
                 progress_bar.set_postfix(loss=loss.item(), acc=batch_acc)
-                writer.add_scalar("train/Loss", loss, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
-                writer.add_scalar("train/Accuracy", batch_acc, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
+                writer.add_scalar(
+                    "train/Loss", loss, ((e - 1) * len(train_dl) + i) * args.train_batch_size)
+                writer.add_scalar("train/Accuracy", batch_acc,
+                                  ((e - 1) * len(train_dl) + i) * args.train_batch_size)
 
                 del y_pos_edges
                 del y_neg_edges
@@ -107,7 +114,8 @@ def train_model(
             print('*' * 30)
             for k, v in results.items():
                 print(f'{k}: {v}')
-                writer.add_scalar(f"train/{k}", v, (pos_pred.shape[0] + neg_pred.shape[0]) * e)
+                writer.add_scalar(
+                    f"train/{k}", v, (pos_pred.shape[0] + neg_pred.shape[0]) * e)
             print('*' * 30)
 
             del pos_pred
@@ -136,7 +144,8 @@ def train_model(
                 loss = val_loss_fn(y_pred, y_batch)
 
                 num_samples_processed += edges_batch.shape[1]
-                batch_acc = torch.mean(1 - torch.abs(y_batch - torch.round(y_pred))).item()
+                batch_acc = torch.mean(
+                    1 - torch.abs(y_batch - torch.round(y_pred))).item()
                 accuracy += batch_acc * edges_batch.shape[1]
                 val_loss += loss.item() * edges_batch.shape[1]
 
@@ -147,8 +156,10 @@ def train_model(
                 progress_bar.set_postfix(
                     val_loss=val_loss / num_samples_processed,
                     acc=accuracy/num_samples_processed)
-                writer.add_scalar("Val/Loss", loss, ((e - 1) * len(dev_dl) + i) * args.val_batch_size)
-                writer.add_scalar("Val/Accuracy", batch_acc, ((e - 1) * len(dev_dl) + i) * args.val_batch_size)
+                writer.add_scalar(
+                    "Val/Loss", loss, ((e - 1) * len(dev_dl) + i) * args.val_batch_size)
+                writer.add_scalar(
+                    "Val/Accuracy", batch_acc, ((e - 1) * len(dev_dl) + i) * args.val_batch_size)
 
                 del edges_batch
                 del y_batch
@@ -175,7 +186,8 @@ def train_model(
             print('*' * 30)
             for k, v in results.items():
                 print(f'{k}: {v}')
-                writer.add_scalar(f"Val/{k}", v, (pos_pred.shape[0] + neg_pred.shape[0]) * e)
+                writer.add_scalar(
+                    f"Val/{k}", v, (pos_pred.shape[0] + neg_pred.shape[0]) * e)
             print('*' * 30)
 
             del pos_pred
@@ -223,7 +235,8 @@ def main():
     dev_dl = data.DataLoader(
         data.TensorDataset(
             torch.cat([valid_edges['edge'], valid_edges['edge_neg']], dim=0),
-            torch.cat([torch.ones(valid_edges['edge'].shape[0]), torch.zeros(valid_edges['edge_neg'].shape[0])], dim=0),
+            torch.cat([torch.ones(valid_edges['edge'].shape[0]),
+                       torch.zeros(valid_edges['edge_neg'].shape[0])], dim=0),
         ),
         batch_size=args.val_batch_size,
         shuffle=True,
@@ -231,8 +244,10 @@ def main():
 
     # Initialize node embeddings
     print('Computing initial embeddings')
-    train_graph = model_utils.initialize_embeddings(train_graph, 'train_embeddings.pt', args.refresh_embeddings)
-    valid_graph = model_utils.initialize_embeddings(valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
+    train_graph = model_utils.initialize_embeddings(
+        train_graph, 'train_embeddings.pt', args.refresh_embeddings)
+    valid_graph = model_utils.initialize_embeddings(
+        valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
     if not args.train_partial_graph:
         train_graph = valid_graph
 
@@ -240,7 +255,8 @@ def main():
     evaluator = Evaluator(name='ogbl-ddi')
 
     # Initialize a model
-    model = models.get_model(args.model)(train_graph.x.shape)
+    model = models.get_model(args.model)(
+        train_graph.x.shape, train_graph.adj_t)
 
     # load from checkpoint if path specified
     if args.load_path is not None:

@@ -13,6 +13,7 @@ from global_attention_layer import LowRankAttention, weight_init
 # be the same as that for (v,u)
 # TODO: in MAD, are we giving the right edges to the predictor? does it not need access to all edges every time?
 
+
 def get_model(model_name: str) -> type:
     models = [GCN, GAT, MAD, GCN_LRGA]
     for m in models:
@@ -21,10 +22,13 @@ def get_model(model_name: str) -> type:
     assert False, f'Could not find model {model_name}!'
 
 # Graph Convolutional Neural Network
+
+
 class GCN(nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
+        adj_t,
         embedding_dim=256,
         hidden_dim=256,
         output_dim=256,
@@ -92,10 +96,13 @@ class GCN(nn.Module):
         return self.predictor(x_s, x_t)
 
 # Graph Attention Networks
+
+
 class GAT(nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
+        adj_t,
         embedding_dim=256,
         hidden_dim=256,
         output_dim=256,
@@ -124,16 +131,16 @@ class GAT(nn.Module):
         # TODO: decide on whether to use concat for other layers than the first one
         conv_layers = [
             GATConv(embedding_dim, hidden_dim,
-            heads=heads, concat=concat, negative_slope=negative_slope,
-            dropout=self.dropout, bias=bias)
-            ] + \
+                    heads=heads, concat=concat, negative_slope=negative_slope,
+                    dropout=self.dropout, bias=bias)
+        ] + \
             [GATConv(mult_factor*hidden_dim, mult_factor*hidden_dim, heads=heads,
-            concat=False, negative_slope=negative_slope,
-            dropout=self.dropout, bias=bias)
-            for _ in range(num_layers-2)] + \
+                     concat=False, negative_slope=negative_slope,
+                     dropout=self.dropout, bias=bias)
+             for _ in range(num_layers-2)] + \
             [GATConv(mult_factor*hidden_dim, output_dim, heads=heads, concat=False,
-            negative_slope=negative_slope,
-            dropout=self.dropout, bias=bias)]
+                     negative_slope=negative_slope,
+                     dropout=self.dropout, bias=bias)]
 
         self.convs = nn.ModuleList(conv_layers)
 
@@ -176,16 +183,19 @@ class GAT(nn.Module):
 
 # Memory Adaptive Differential Learning
 # mainly from https://github.com/cf020031308/mad-learning
+
+
 class MAD(nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
+        adj_t,
         embedding_dim=12,
         n_heads=12,
         n_samples=8,
         n_sentinels=8,
-        n_nearest=8
-        ):
+        n_nearest=8,
+    ):
 
         super().__init__()
         self.embedding_dim = embedding_dim
@@ -197,9 +207,10 @@ class MAD(nn.Module):
 
         self.embeds = nn.Parameter(
             torch.rand((self.n_heads, self.n_nodes, embedding_dim)))
-
-        self.predictor = None
-
+        self.predictor = MADpredictor(
+            self.embedding_dim, adj_t, self.n_nodes, n_heads=self.n_heads,
+            n_samples=self.n_samples, n_sentinels=self.n_sentinels,
+            n_nearest=self.n_nearest).to(adj_t.device())
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
@@ -209,18 +220,10 @@ class MAD(nn.Module):
         Outputs:
             prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
         '''
-
-        #if no predictor instantiated, initialize it
-        if self.predictor is None:
-            self.predictor = MADpredictor(
-            self.embedding_dim, self.n_nodes, n_heads=self.n_heads,
-            n_samples=self.n_samples, n_sentinels=self.n_sentinels,
-            n_nearest=self.n_nearest, adj_t = adj_t).to(edges.device)
-
         return self.predictor(self.embeds, edges)
 
     def reset_parameters(self):
-        #TODO: implement?
+        # TODO: implement?
         pass
 
 
@@ -230,6 +233,7 @@ class GCN_LRGA(torch.nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
+        adj_t,
         embedding_dim=256,
         hidden_dim=256,
         output_dim=256,
@@ -237,7 +241,7 @@ class GCN_LRGA(torch.nn.Module):
         dropout=.5,
         k=50,
         cache=True,
-        ):
+    ):
         '''
         k: rank of the low-rank approximation
         '''
@@ -259,18 +263,20 @@ class GCN_LRGA(torch.nn.Module):
         self.attention.append(LowRankAttention(self.k, embedding_dim, dropout))
         # dimension_reduce #TODO: clarify
         self.dimension_reduce = torch.nn.ModuleList()
-        self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,\
-        hidden_dim),nn.ReLU()))
+        self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,
+                                                             hidden_dim), nn.ReLU()))
         # batch normalization layers
-        self.bn = nn.ModuleList([nn.BatchNorm1d(hidden_dim) for _ in range(num_layers-1)])
+        self.bn = nn.ModuleList([nn.BatchNorm1d(hidden_dim)
+                                 for _ in range(num_layers-1)])
 
         for _ in range(num_layers - 1):
             self.convs.append(GCNConv(hidden_dim, hidden_dim, cached=cache))
-            self.attention.append(LowRankAttention(self.k,hidden_dim, dropout))
-            self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,\
-            hidden_dim)))
-        self.dimension_reduce[-1] = nn.Sequential(nn.Linear(2*self.k + hidden_dim,\
-            output_dim))
+            self.attention.append(LowRankAttention(
+                self.k, hidden_dim, dropout))
+            self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,
+                                                                 hidden_dim)))
+        self.dimension_reduce[-1] = nn.Sequential(nn.Linear(2*self.k + hidden_dim,
+                                                            output_dim))
         self.dropout = dropout
 
         self.predictor = LinkPredictor(
@@ -292,20 +298,18 @@ class GCN_LRGA(torch.nn.Module):
         # shape num_nodes, embedding_dim
         x = self.embedding.weight
 
-        #TODO: make sure to understand all the steps here
+        # TODO: make sure to understand all the steps here
         for i, conv in enumerate(self.convs[:-1]):
             x_local = F.relu(conv(x, adj_t))
-            x_local = F.dropout(x_local, p=self.dropout, training=self.training)
+            x_local = F.dropout(x_local, p=self.dropout,
+                                training=self.training)
             x_global = self.attention[i](x)
-            x = self.dimension_reduce[i](torch.cat((x_global, x_local),dim=1))
+            x = self.dimension_reduce[i](torch.cat((x_global, x_local), dim=1))
             x = F.relu(x)
             x = self.bn[i](x)
         x_local = F.relu(self.convs[-1](x, adj_t))
         x_local = F.dropout(x_local, p=self.dropout, training=self.training)
         x_global = self.attention[-1](x)
-        x = self.dimension_reduce[-1](torch.cat((x_global, x_local),dim=1))
+        x = self.dimension_reduce[-1](torch.cat((x_global, x_local), dim=1))
 
         return self.predictor(x, edges)
-
-
-

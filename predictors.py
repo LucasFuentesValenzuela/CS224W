@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torch_sparse
 from typing import Tuple, Optional
 
+
 class LinkPredictor(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers,
                  dropout):
@@ -43,17 +44,19 @@ class LinkPredictor(torch.nn.Module):
         return torch.sigmoid(x).flatten()
 
 # mainly from https://github.com/cf020031308/mad-learning
+
+
 class MADpredictor(torch.nn.Module):
     def __init__(
         self,
         embedding_dim,
+        adj_t,
         n_nodes,
         n_heads=4,
         n_samples=256,
         n_sentinels=8,
         n_nearest=8,
-        adj_t = None
-        ):
+    ):
         '''
         in_channels: dimensions of the embeddings before prediction
         n_nodes: number of nodes in the graph
@@ -68,7 +71,7 @@ class MADpredictor(torch.nn.Module):
         self.n_sentinels = n_sentinels
         self.n_nearest = n_nearest
         self.adj = adj_t.to_dense()
-        self.uncertainty = nn.Parameter(torch.ones(1,1,1)*5)
+        self.uncertainty = nn.Parameter(torch.ones(1, 1, 1)*5)
         self.field = nn.Parameter(
             torch.rand((n_heads, n_nodes, embedding_dim)))
 
@@ -108,15 +111,17 @@ class MADpredictor(torch.nn.Module):
 
         # Handling Sentinels
         # Reminder: sentinels are used to avoid giving too much weight to distant references
-        logits=torch.cat((
-            logits, torch.zeros((self.n_heads, n_batch, self.n_sentinels), device=dist.device)
-        ), dim = 2)
-        dist=torch.cat((
-            dist, torch.ones((self.n_heads, n_batch, self.n_sentinels), device=dist.device)
-        ), dim = 2)
+        logits = torch.cat((
+            logits, torch.zeros(
+                (self.n_heads, n_batch, self.n_sentinels), device=dist.device)
+        ), dim=2)
+        dist = torch.cat((
+            dist, torch.ones(
+                (self.n_heads, n_batch, self.n_sentinels), device=dist.device)
+        ), dim=2)
 
         # Softmin
-        softmin_=(
+        softmin_ = (
             logits.unsqueeze(2) @ torch.softmax(1-dist, dim=2).unsqueeze(3)
         ).squeeze(2).squeeze(2)
 
@@ -138,7 +143,7 @@ class MADpredictor(torch.nn.Module):
         # Sample reference points
         # shape is (self.n_heads, n_batch, self.n_samples)
         samples = torch.randint(
-        0, self.n_nodes, (self.n_heads, n_batch, self.n_samples))
+            0, self.n_nodes, (self.n_heads, n_batch, self.n_samples))
 
         # TODO include what happens when no training
         if self.n_nearest and not self.training:
@@ -153,23 +158,23 @@ class MADpredictor(torch.nn.Module):
         # so embeds[:, src_samples] retrieves the source nodes and their features for all the heads
         # embeds[:, src_samples] should be shape (n_heads, batch, node_features)
         #   with unsqueeze, add one dimension. so srcdiff is actually a 4-tensor
-        heads_v=torch.arange(self.n_heads).unsqueeze(1).unsqueeze(2)
+        heads_v = torch.arange(self.n_heads).unsqueeze(1).unsqueeze(2)
         # diff is shape (n_heads, n_batch, n_samples, n_features)
-        diff=embeds[:, nodes_].unsqueeze(2) - embeds[heads_v, samples]
+        diff = embeds[:, nodes_].unsqueeze(2) - embeds[heads_v, samples]
 
         # label
         if node_type == 'source':
-            label = self.uncertainty * (self.adj[samples, tgt_nodes.unsqueeze(0).unsqueeze(2)] * 2 - 1)
+            label = self.uncertainty * \
+                (self.adj[samples, tgt_nodes.unsqueeze(0).unsqueeze(2)] * 2 - 1)
         elif node_type == 'target':
-            label = self.uncertainty * (self.adj[src_nodes.unsqueeze(0).unsqueeze(2), samples] * 2 - 1)
-
+            label = self.uncertainty * \
+                (self.adj[src_nodes.unsqueeze(0).unsqueeze(2), samples] * 2 - 1)
 
         # logits should be shape (n_heads, n_batch, n_samples)
-        logits=(
-        (diff.unsqueeze(3) @ (self.field[:, nodes_logits].unsqueeze(2).unsqueeze(4))
-        ).squeeze(3).squeeze(3)
-        + label
+        logits = (
+            (diff.unsqueeze(3) @ (self.field[:, nodes_logits].unsqueeze(2).unsqueeze(4))
+             ).squeeze(3).squeeze(3)
+            + label
         )
 
         return logits, diff
-

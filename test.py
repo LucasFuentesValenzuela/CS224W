@@ -9,7 +9,7 @@ from torch import optim
 from torch.utils import data
 from torch.utils.tensorboard import SummaryWriter
 import torch_geometric as pyg
-from tqdm import tqdm # type: ignore
+from tqdm import tqdm  # type: ignore
 from ogb.linkproppred import Evaluator
 
 from args import *
@@ -79,7 +79,7 @@ def test_model(
                 'y_pred_neg': neg_pred,
             })[f'hits@{K}']
 
-            results[f'Hits@{K}'] = hits #(train_hits, valid_hits, test_hits)
+            results[f'Hits@{K}'] = hits  # (train_hits, valid_hits, test_hits)
 
         print()
         print(f'{phase} Statistics')
@@ -103,7 +103,8 @@ def main():
     test_dl = data.DataLoader(
         data.TensorDataset(
             torch.cat([test_edges['edge'], test_edges['edge_neg']], dim=0),
-            torch.cat([torch.ones(test_edges['edge'].shape[0]), torch.zeros(test_edges['edge_neg'].shape[0])], dim=0)
+            torch.cat([torch.ones(test_edges['edge'].shape[0]),
+                       torch.zeros(test_edges['edge_neg'].shape[0])], dim=0)
         ),
         batch_size=args.batch_size,
         shuffle=True,
@@ -111,7 +112,8 @@ def main():
     valid_dl = data.DataLoader(
         data.TensorDataset(
             torch.cat([valid_edges['edge'], valid_edges['edge_neg']], dim=0),
-            torch.cat([torch.ones(valid_edges['edge'].shape[0]), torch.zeros(valid_edges['edge_neg'].shape[0])], dim=0)
+            torch.cat([torch.ones(valid_edges['edge'].shape[0]),
+                       torch.zeros(valid_edges['edge_neg'].shape[0])], dim=0)
         ),
         batch_size=args.batch_size,
         shuffle=True,
@@ -123,9 +125,10 @@ def main():
     }
 
     # Initialize node embeddings
-    test_graph = model_utils.initialize_embeddings(test_graph, 'test_embeddings.pt', args.refresh_embeddings)
-    valid_graph = model_utils.initialize_embeddings(valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
-
+    test_graph = model_utils.initialize_embeddings(
+        test_graph, 'test_embeddings.pt', args.refresh_embeddings)
+    valid_graph = model_utils.initialize_embeddings(
+        valid_graph, 'valid_embeddings.pt', args.refresh_embeddings)
 
     graphs = {
         'test': test_graph,
@@ -135,7 +138,7 @@ def main():
         graphs['test'] = valid_graph
 
     # Initialize a model
-    model = models.get_model(args.model)(test_graph.x.shape)
+    model = models.get_model(args.model)(test_graph.x.shape, test_graph.adj_t)
 
     # load from checkpoint if path specified
     assert args.load_path is not None
@@ -161,5 +164,3 @@ def main():
 if __name__ == '__main__':
     model_utils.verify_versions()
     main()
-
-
