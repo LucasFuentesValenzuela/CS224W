@@ -223,7 +223,7 @@ class MAD_GCN(nn.Module):
     def __init__(
         self,
         embedding_shape: Tuple[int, int],
-        adj_t,
+        adj_t: torch_sparse.SparseTensor,
         embedding_dim=256,
         n_heads=12,
         n_samples=8,
