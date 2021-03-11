@@ -15,7 +15,7 @@ from global_attention_layer import LowRankAttention, weight_init
 
 
 def get_model(model_name: str) -> type:
-    models = [GCN, GAT, MAD, GCN_LRGA]
+    models = [GCN, GAT, MAD, MAD_GCN, GCN_LRGA]
     for m in models:
         if m.__name__ == model_name:
             return m
@@ -87,13 +87,7 @@ class GCN(nn.Module):
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.convs[-1](x, adj_t)
 
-        # Decode
-        # source nodes embeddings, shape (num_query_edges, final_embedding_dim)
-        x_s = x[edges[0, :]]
-        # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
-        x_t = x[edges[1, :]]
-
-        return self.predictor(x_s, x_t)
+        return self.predictor(x, edges)
 
 # Graph Attention Networks
 
@@ -183,8 +177,6 @@ class GAT(nn.Module):
 
 # Memory Adaptive Differential Learning
 # mainly from https://github.com/cf020031308/mad-learning
-
-
 class MAD(nn.Module):
     def __init__(
         self,
@@ -221,6 +213,94 @@ class MAD(nn.Module):
             prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
         '''
         return self.predictor(self.embeds, edges)
+
+    def reset_parameters(self):
+        # TODO: implement?
+        pass
+
+# Combination of MAD and GCN-learned embeddings 
+class MAD_GCN(nn.Module):
+    def __init__(
+        self,
+        embedding_shape: Tuple[int, int],
+        adj_t,
+        embedding_dim=256,
+        n_heads=12,
+        n_samples=8,
+        n_sentinels=8,
+        n_nearest=8,
+        hidden_dim=256,
+        output_dim=12,
+        num_layers=2,
+        dropout=0.5,
+        cache=True,
+    ):
+
+        super().__init__()
+        # architecture
+        self.dropout = dropout
+        self.embedding_dim = embedding_dim
+        self.n_nodes = embedding_shape[0]
+        self.n_samples = n_samples
+        self.n_heads = n_heads
+        self.n_sentinels = n_sentinels
+        self.n_nearest = n_nearest
+
+        # we create one parallel network for each head
+        self.embeds_list = []
+        self.convs_list = []
+        self.bns_list = []
+        for k in range(self.n_heads):
+            crt_embedding = nn.Embedding(
+                embedding_shape[0], embedding_dim)
+            nn.init.xavier_uniform_(crt_embedding.weight)
+            self.embeds_list.append(crt_embedding)
+
+            conv_layers = [GCNConv(embedding_dim, hidden_dim, cached=cache)] + \
+                [GCNConv(hidden_dim, hidden_dim, cached=cache) for _ in range(num_layers-2)] + \
+                [GCNConv(hidden_dim, output_dim, cached=cache)]
+            self.convs_list.append(nn.ModuleList(conv_layers))
+
+            # bns_layers = [nn.BatchNorm1d(num_features=hidden_dim)
+            #             for _ in range(num_layers)]
+            # self.bns_list.append(nn.ModuleList(bns_layers))
+
+        self.predictor = MADpredictor(
+                output_dim, adj_t, self.n_nodes, n_heads=self.n_heads,
+                n_samples=self.n_samples, n_sentinels=self.n_sentinels,
+                n_nearest=self.n_nearest).to(adj_t.device())
+
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+        '''
+        Inputs:
+            adj_t: SparseTensor shape (num_nodes, num_nodes)
+            edges: Tensor shape (2, num_query_edges)
+        Outputs:
+            prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
+        '''
+
+        #We basically run the GCN forward for each head
+        x_list = []
+        for i in range(self.n_heads):
+            # Initial embedding lookup
+            # shape num_nodes, embedding_dim
+            x = self.embeds_list[i].weight
+
+            # Building new node embeddings with GCNConv layers
+            convs = self.convs_list[i]
+            for k in range(len(convs)-1):
+                x = convs[k](x, adj_t)
+                x = F.relu(x)
+                x = F.dropout(x, p=self.dropout, training=self.training)
+            x = convs[-1](x, adj_t)
+            # x_list represents the transformed embeddings for each head
+            x_list.append(x.unsqueeze(0))
+
+        # we have to concatenate head-specific embeddings to match predictor expectations
+        # shape (n_heads, n_nodes, output_dim)
+        x_embeds = torch.cat(x_list, dim=0)
+
+        return self.predictor(x_embeds, edges)
 
     def reset_parameters(self):
         # TODO: implement?
