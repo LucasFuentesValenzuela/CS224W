@@ -138,7 +138,7 @@ def main():
         graphs['test'] = valid_graph
 
     # Initialize a model
-    model = models.get_model(args.model)(test_graph.x.shape, test_graph.adj_t)
+    model = models.get_model(args.model)(test_graph.x.shape, test_graph.adj_t.to(device))
 
     # load from checkpoint if path specified
     assert args.load_path is not None

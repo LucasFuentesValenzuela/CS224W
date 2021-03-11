@@ -256,7 +256,7 @@ def main():
 
     # Initialize a model
     model = models.get_model(args.model)(
-        train_graph.x.shape, train_graph.adj_t)
+        train_graph.x.shape, train_graph.adj_t.to(device))
 
     # load from checkpoint if path specified
     if args.load_path is not None:
