@@ -181,7 +181,6 @@ class MADpredictor(torch.nn.Module):
         if not self.field_NN:
             g = self.field[:, nodes_logits] 
         else:
-            xx = self.field(embeds)
             g = self.field(embeds)[:, nodes_logits]
 
         logits = (
