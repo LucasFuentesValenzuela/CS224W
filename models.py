@@ -177,6 +177,8 @@ class GAT(nn.Module):
 
 # Memory Adaptive Differential Learning
 # mainly from https://github.com/cf020031308/mad-learning
+
+
 class MAD(nn.Module):
     def __init__(
         self,
@@ -187,6 +189,7 @@ class MAD(nn.Module):
         n_samples=8,
         n_sentinels=8,
         n_nearest=8,
+        field_NN=False
     ):
 
         super().__init__()
@@ -202,7 +205,7 @@ class MAD(nn.Module):
         self.predictor = MADpredictor(
             self.embedding_dim, adj_t, self.n_nodes, n_heads=self.n_heads,
             n_samples=self.n_samples, n_sentinels=self.n_sentinels,
-            n_nearest=self.n_nearest).to(adj_t.device())
+            n_nearest=self.n_nearest, field_NN=field_NN).to(adj_t.device())
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
@@ -219,6 +222,8 @@ class MAD(nn.Module):
         pass
 
 # Combination of MAD and GCN-learned embeddings
+
+
 class MAD_GCN(nn.Module):
     def __init__(
         self,
@@ -234,6 +239,7 @@ class MAD_GCN(nn.Module):
         num_layers=2,
         dropout=0.5,
         cache=True,
+        field_NN=False,
     ):
 
         super().__init__()
@@ -248,20 +254,20 @@ class MAD_GCN(nn.Module):
 
         self.output_dim = output_dim
 
-
         self.embeds = nn.Embedding(
             embedding_shape[0], embedding_dim*self.n_heads)
         nn.init.xavier_uniform_(self.embeds.weight)
 
         conv_layers = [GCNConv(embedding_dim*self.n_heads, hidden_dim*self.n_heads, cached=cache)] + \
             [GCNConv(hidden_dim*self.n_heads, hidden_dim*self.n_heads, cached=cache) for _ in range(num_layers-2)] + \
-            [GCNConv(hidden_dim*self.n_heads, output_dim*self.n_heads, cached=cache)]
+            [GCNConv(hidden_dim*self.n_heads, output_dim *
+                     self.n_heads, cached=cache)]
         self.convs = nn.ModuleList(conv_layers)
 
         self.predictor = MADpredictor(
-                output_dim, adj_t, self.n_nodes, n_heads=self.n_heads,
-                n_samples=self.n_samples, n_sentinels=self.n_sentinels,
-                n_nearest=self.n_nearest).to(adj_t.device())
+            output_dim, adj_t, self.n_nodes, n_heads=self.n_heads,
+            n_samples=self.n_samples, n_sentinels=self.n_sentinels,
+            n_nearest=self.n_nearest, field_NN=field_NN).to(adj_t.device())
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
@@ -281,10 +287,10 @@ class MAD_GCN(nn.Module):
             x = self.convs[k](x, adj_t)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, adj_t) # shape (n_nodes, output_dim * n_heads)
+        x = self.convs[-1](x, adj_t)  # shape (n_nodes, output_dim * n_heads)
 
         x = torch.reshape(x, (self.n_nodes, self.output_dim, self.n_heads))
-        x = x.permute(2, 0, 1) # shape (n_heads, n_nodes, output_dim)
+        x = x.permute(2, 0, 1)  # shape (n_heads, n_nodes, output_dim)
 
         return self.predictor(x, edges)
 
