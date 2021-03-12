@@ -229,12 +229,12 @@ class MAD_GCN(nn.Module):
         self,
         embedding_shape: Tuple[int, int],
         adj_t: torch_sparse.SparseTensor,
-        embedding_dim=256,
+        embedding_dim=144,
         n_heads=12,
         n_samples=8,
         n_sentinels=8,
         n_nearest=8,
-        hidden_dim=256,
+        hidden_dim=144,
         output_dim=12,
         num_layers=2,
         dropout=0.5,
@@ -269,6 +269,8 @@ class MAD_GCN(nn.Module):
             n_samples=self.n_samples, n_sentinels=self.n_sentinels,
             n_nearest=self.n_nearest, field_NN=field_NN).to(adj_t.device())
 
+        self.gcn_cache = None
+
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
         Inputs:
@@ -277,20 +279,30 @@ class MAD_GCN(nn.Module):
         Outputs:
             prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
         '''
+        if self.training:
+            self.gcn_cache = None
 
-        # Initial embedding lookup
-        # shape num_nodes, embedding_dim
-        x = self.embeds.weight
+        if self.gcn_cache == None:
 
-        # Building new node embeddings with GCNConv layers
-        for k in range(len(self.convs)-1):
-            x = self.convs[k](x, adj_t)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, adj_t)  # shape (n_nodes, output_dim * n_heads)
+            # Initial embedding lookup
+            # shape num_nodes, embedding_dim
+            x = self.embeds.weight
 
-        x = torch.reshape(x, (self.n_nodes, self.output_dim, self.n_heads))
-        x = x.permute(2, 0, 1)  # shape (n_heads, n_nodes, output_dim)
+            # Building new node embeddings with GCNConv layers
+            for k in range(len(self.convs)-1):
+                x = self.convs[k](x, adj_t)
+                x = F.relu(x)
+                x = F.dropout(x, p=self.dropout, training=self.training)
+            x = self.convs[-1](x, adj_t)  # shape (n_nodes, output_dim * n_heads)
+
+            x = torch.reshape(x, (self.n_nodes, self.output_dim, self.n_heads))
+            x = x.permute(2, 0, 1)  # shape (n_heads, n_nodes, output_dim)
+
+            if not self.training:
+                self.gcn_cache = torch.clone(x.detach(), memory_format=torch.contiguous_format)
+
+        if not self.training:
+            x = self.gcn_cache
 
         return self.predictor(x, edges)
 

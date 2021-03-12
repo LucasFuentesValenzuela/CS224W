@@ -80,7 +80,7 @@ class MADpredictor(torch.nn.Module):
             self.field = nn.Parameter(
                 torch.rand((n_heads, n_nodes, embedding_dim)))
         else:
-            self.field = Field_predictor(embedding_dim, n_heads, n_nodes) 
+            self.field = Field_predictor(embedding_dim, n_heads, n_nodes)
 
     def forward(self, embeds, batch_edges):
         '''
@@ -157,7 +157,7 @@ class MADpredictor(torch.nn.Module):
             # Grab closest pos vectors during test time, rather than using random ones
             samples = (
                 embeds[:, nodes_].unsqueeze(2) - embeds.unsqueeze(1)
-            ).norm(dim=3).topk(1+self.n_nearest, largest=False).indices[:, :, 1:]
+            ).norm(dim=3).topk(1+self.n_nearest, largest=False, sorted=False).indices[:, :, 1:]
 
         # Compute (u - u_0)
         # Notes:
@@ -179,7 +179,7 @@ class MADpredictor(torch.nn.Module):
 
         # logits should be shape (n_heads, n_batch, n_samples)
         if not self.field_NN:
-            g = self.field[:, nodes_logits] 
+            g = self.field[:, nodes_logits]
         else:
             g = self.field(embeds)[:, nodes_logits]
 
@@ -194,9 +194,9 @@ class MADpredictor(torch.nn.Module):
 class Field_predictor(torch.nn.Module):
     def __init__(
         self,
-        embedding_dim, 
-        n_heads, 
-        n_nodes, 
+        embedding_dim,
+        n_heads,
+        n_nodes,
         dropout=.5,
         num_layers=2
     ):

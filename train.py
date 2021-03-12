@@ -43,6 +43,7 @@ def train_model(
 
         # Training portion
         torch.cuda.empty_cache()
+        torch.set_grad_enabled(True)
         with tqdm(total=args.train_batch_size * len(train_dl)) as progress_bar:
             model.train()
 
@@ -123,6 +124,7 @@ def train_model(
 
         # Validation portion
         torch.cuda.empty_cache()
+        torch.set_grad_enabled(False)
         with tqdm(total=args.val_batch_size * len(dev_dl)) as progress_bar:
             model.eval()
 
