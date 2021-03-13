@@ -15,7 +15,7 @@ from global_attention_layer import LowRankAttention, weight_init
 
 
 def get_model(model_name: str) -> type:
-    models = [GCN, GAT, MAD, MAD_GCN, GCN_LRGA]
+    models = [GCN, GAT, MAD, MAD_GCN, GCN_LRGA, MAD_GCN_LRGA]
     for m in models:
         if m.__name__ == model_name:
             return m
@@ -229,14 +229,14 @@ class MAD_GCN(nn.Module):
         self,
         embedding_shape: Tuple[int, int],
         adj_t: torch_sparse.SparseTensor,
-        embedding_dim=144,
+        embedding_dim=256,
         n_heads=12,
         n_samples=8,
         n_sentinels=8,
         n_nearest=8,
-        hidden_dim=144,
+        hidden_dim=256,
         output_dim=12,
-        num_layers=2,
+        num_layers=1,
         dropout=0.5,
         cache=True,
         field_NN=False,
@@ -395,5 +395,104 @@ class GCN_LRGA(torch.nn.Module):
         x_local = F.dropout(x_local, p=self.dropout, training=self.training)
         x_global = self.attention[-1](x)
         x = self.dimension_reduce[-1](torch.cat((x_global, x_local), dim=1))
+
+        return self.predictor(x, edges)
+
+
+
+# Low Rank Global Attention
+# mainly from https://github.com/omri1348/LRGA
+class MAD_GCN_LRGA(torch.nn.Module):
+    def __init__(
+        self,
+        embedding_shape: Tuple[int, int],
+        adj_t: torch_sparse.SparseTensor,
+        embedding_dim=256,
+        hidden_dim=256,
+        output_dim=12,
+        num_layers=2,
+        dropout=.5,
+        k=50,
+        cache=True,
+        n_heads=12,
+        n_samples=8,
+        n_sentinels=8,
+        n_nearest=8,
+        field_NN=False
+    ):
+        '''
+        k: rank of the low-rank approximation
+        '''
+        super().__init__()
+        self.k = k
+        self.embedding_dim = embedding_shape[0]
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.num_layers = num_layers
+
+        self.embedding = nn.Embedding(
+            embedding_shape[0], embedding_dim)
+
+        # convolutional layers
+        self.convs = torch.nn.ModuleList()
+        self.convs.append(GCNConv(embedding_dim, hidden_dim, cached=cache))
+        # attention layer
+        self.attention = torch.nn.ModuleList()
+        self.attention.append(LowRankAttention(self.k, embedding_dim, dropout))
+        # dimension_reduce #TODO: clarify
+        self.dimension_reduce = torch.nn.ModuleList()
+        self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,
+                                                             hidden_dim), nn.ReLU()))
+        # batch normalization layers
+        self.bn = nn.ModuleList([nn.BatchNorm1d(hidden_dim)
+                                 for _ in range(num_layers-1)])
+
+        for _ in range(num_layers - 1):
+            self.convs.append(GCNConv(hidden_dim, hidden_dim, cached=cache))
+            self.attention.append(LowRankAttention(
+                self.k, hidden_dim, dropout))
+            self.dimension_reduce.append(nn.Sequential(nn.Linear(2*self.k + hidden_dim,
+                                                                 hidden_dim)))
+        self.dimension_reduce[-1] = nn.Sequential(nn.Linear(2*self.k + hidden_dim,
+                                                            output_dim))
+        self.dropout = dropout
+
+        self.predictor = MADpredictor(
+            output_dim, adj_t, self.n_nodes, n_heads=self.n_heads,
+            n_samples=self.n_samples, n_sentinels=self.n_sentinels,
+            n_nearest=self.n_nearest, field_NN=field_NN).to(adj_t.device())
+
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+        for glob_attention in self.attention:
+            glob_attention.apply(weight_init)
+        for dim_reduce in self.dimension_reduce:
+            dim_reduce.apply(weight_init)
+        for batch_norm in self.bn:
+            batch_norm.reset_parameters()
+        self.predictor.reset_parameters()
+
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+
+        # Initial embedding lookup
+        # shape num_nodes, embedding_dim
+        x = self.embedding.weight
+
+        # TODO: make sure to understand all the steps here
+        for i, conv in enumerate(self.convs[:-1]):
+            x_local = F.relu(conv(x, adj_t))
+            x_local = F.dropout(x_local, p=self.dropout,
+                                training=self.training)
+            x_global = self.attention[i](x)
+            x = self.dimension_reduce[i](torch.cat((x_global, x_local), dim=1))
+            x = F.relu(x)
+            x = self.bn[i](x)
+        x_local = F.relu(self.convs[-1](x, adj_t))
+        x_local = F.dropout(x_local, p=self.dropout, training=self.training)
+        x_global = self.attention[-1](x)
+        x = self.dimension_reduce[-1](torch.cat((x_global, x_local), dim=1))
+
+        x = torch.clone(x, memory_format=torch.contiguous_format)
 
         return self.predictor(x, edges)

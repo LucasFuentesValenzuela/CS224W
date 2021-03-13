@@ -45,7 +45,7 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--checkpoint_freq',
         type=int,
-        default=1,
+        default=30,
         help='Number of epochs between each checkpoint',
     )
     parser.add_argument(
@@ -89,7 +89,6 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         '--model',
         type=str,
         default='GCN',
-        choices = ['GCN', 'GAT', 'MAD', 'GCN_LRGA', 'MAD_GCN'],
         help='choose the model to train',
     )
     parser.add_argument(

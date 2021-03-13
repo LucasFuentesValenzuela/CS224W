@@ -30,11 +30,10 @@ def train_model(
 ) -> nn.Module:
 
     device = model_utils.get_device()
-    # TODO: Set this to the correct loss fn
     loss_fn = nn.functional.binary_cross_entropy
-    # TODO: Set this to the correct loss fn
     val_loss_fn = nn.functional.binary_cross_entropy
     best_val_loss = torch.tensor(float('inf'))
+    best_val_hits = torch.tensor(0.0)
     saved_checkpoints = []
     writer = SummaryWriter(log_dir=f'{args.log_dir}/{args.experiment}')
 
@@ -196,12 +195,12 @@ def train_model(
             del neg_pred
 
             # Save model if it's the best one yet.
-            if val_loss / num_samples_processed < best_val_loss:
-                best_val_loss = val_loss / num_samples_processed
+            if results['Hits@20'] > best_val_hits:
+                best_val_hits = results['Hits@20']
                 filename = f'{args.save_path}/{args.experiment}/{model.__class__.__name__}_best_val.checkpoint'
                 model_utils.save_model(model, filename)
                 print(f'Model saved!')
-                print(f'Best validation loss yet: {best_val_loss}')
+                print(f'Best validation Hits@20 yet: {best_val_hits}')
             # Save model on checkpoints.
             if e % args.checkpoint_freq == 0:
                 filename = f'{args.save_path}/{args.experiment}/{model.__class__.__name__}_epoch_{e}.checkpoint'
