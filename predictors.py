@@ -4,6 +4,7 @@ from torch import nn
 import torch.nn.functional as F
 import torch_sparse
 from typing import Tuple, Optional
+from enum import Enum
 
 
 class LinkPredictor(torch.nn.Module):
@@ -45,6 +46,10 @@ class LinkPredictor(torch.nn.Module):
 
 # mainly from https://github.com/cf020031308/mad-learning
 
+class FieldType(Enum):
+    NONE = 0
+    NN = 1
+    EXTERNAL = 2
 
 class MADpredictor(torch.nn.Module):
     def __init__(
@@ -56,7 +61,8 @@ class MADpredictor(torch.nn.Module):
         n_samples=256,
         n_sentinels=8,
         n_nearest=8,
-        field_NN=False
+        field_NN=False,
+        extern_field=False,
     ):
         '''
         in_channels: dimensions of the embeddings before prediction
@@ -74,15 +80,19 @@ class MADpredictor(torch.nn.Module):
         self.adj = adj_t.to_dense()
         self.uncertainty = nn.Parameter(torch.ones(1, 1, 1)*5)
         self.field_NN = field_NN
+        self.extern_field = extern_field
 
         # field is not parameterized as a NN
-        if not field_NN:
+        if field_NN == FieldType.NONE:
             self.field = nn.Parameter(
                 torch.rand((n_heads, n_nodes, embedding_dim)))
-        else:
+        elif field_NN == FieldType.NN:
             self.field = Field_predictor(embedding_dim, n_heads, n_nodes)
+        elif field_NN == FieldType.EXTERNAL:
+            # Field values are second half of embeds at forward pass.
+            self.field = None
 
-    def forward(self, embeds, batch_edges):
+    def forward(self, embeds, batch_edges, field=None):
         '''
         embeds: embeddings for all the nodes in the graph (n_heads, n_nodes, n_features)
         edges: batch of edges to predict
@@ -94,12 +104,21 @@ class MADpredictor(torch.nn.Module):
         # Actually one way to make it permutation invariant is to
         # predict in "both directions", which I think is what they do
 
+        if self.field_NN == FieldType.NONE:
+            field = self.field
+        elif self.field_NN == FieldType.NN:
+            field = self.field(embeds)
+        elif self.field_NN == FieldType.EXTERNAL:
+            field = field
+        else:
+            assert False, "Invalid fieldtype!"
+
         # logits when the source is considered static
         src_logits, src_diff = self.build_logits(
-            embeds, batch_edges, node_type='source')
+            embeds, batch_edges, field, node_type='source')
         # logits when the target is considered static
         tgt_logits, tgt_diff = self.build_logits(
-            embeds, batch_edges, node_type='target')
+            embeds, batch_edges, field, node_type='target')
 
         # logits now is shape (n_heads, n_batch, 2*n_samples)
         # the reason there are 2 per sample is that we consider it
@@ -135,7 +154,7 @@ class MADpredictor(torch.nn.Module):
         # return the average over the different heads for prediction
         return softmin_.mean(0)
 
-    def build_logits(self, embeds, batch_edges, node_type='source'):
+    def build_logits(self, embeds, batch_edges, field: torch.Tensor, node_type='source'):
 
         src_nodes, tgt_nodes = batch_edges[0, :].T, batch_edges[1, :].T
 
@@ -178,10 +197,7 @@ class MADpredictor(torch.nn.Module):
                 (self.adj[src_nodes.unsqueeze(0).unsqueeze(2), samples] * 2 - 1)
 
         # logits should be shape (n_heads, n_batch, n_samples)
-        if not self.field_NN:
-            g = self.field[:, nodes_logits]
-        else:
-            g = self.field(embeds)[:, nodes_logits]
+        g = field[:, nodes_logits]
 
         logits = (
             (diff.unsqueeze(3) @ (g.unsqueeze(2).unsqueeze(4))
