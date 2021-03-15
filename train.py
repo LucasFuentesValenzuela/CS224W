@@ -13,8 +13,9 @@ from torch_geometric.utils import negative_sampling
 from ogb.linkproppred import Evaluator
 
 from args import *
-import models
+# import models
 import model_utils
+import models2 as models
 
 
 def train_model(
@@ -257,7 +258,9 @@ def main():
 
     # Initialize a model
     model = models.get_model(args.model)(
-        train_graph.x.shape, train_graph.adj_t.to(device))
+        # train_graph.x.shape, train_graph.adj_t.to(device)
+        num_nodes=train_graph.num_nodes, adj_t=train_graph.adj_t.to(device)
+    )
 
     # load from checkpoint if path specified
     if args.load_path is not None:

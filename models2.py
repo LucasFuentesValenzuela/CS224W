@@ -13,7 +13,7 @@ from predictors import LinkPredictor
 def get_model(model_name: str) -> type:
     models = [GCN_Linear, MAD_Model, MAD_GCN]
     for m in models:
-        if m.__name__ == model_name:
+        if m.__name__.lower() == model_name.lower():
             return m
     assert False, f'Could not find model {model_name}!'
 
@@ -233,10 +233,11 @@ class MADEdgePredictor(nn.Module):
         '''
 
         # Model link prediction problem as:
-        # Pred = r(pos[src_node], pos[dst_node])
-        #     ~=~ r(pos[src0], pos[dst0])
-        #         + (pos[src] - pos[src0]) grads(src)
-        #         + (pos[dst] - pos[dst0]) grads(dst)
+        # Pred = r(pos[src], pos[dst])
+        #     ~=~ [
+        #              r(src0, dst) + (pos[src] - pos[src0]) grads(dst),
+        #              r(src, dst0) + (pos[dst] - pos[dst0]) grads(src),
+        #         ]
         # Average preds over several heads, weighed by distance
         # of [src, dst] to [src0, dst0]
 
@@ -246,7 +247,7 @@ class MADEdgePredictor(nn.Module):
         src = edges[0] # (batch_size,)
         dst = edges[1] # (batch_size,)
 
-        heads_idx = torch.arange(0, self.num_heads) # (num_heads,)
+        heads_idx = torch.arange(0, self.num_heads, device=device) # (num_heads,)
 
         # (batch_size, num_heads, embedding_dim)
         pos_src = pos[src.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
@@ -289,8 +290,8 @@ class MADEdgePredictor(nn.Module):
 
         # grads(src), grads(dst)
         # (batch_size, num_heads, embedding_dim)
-        grads_src = grads[src.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
-        grads_dst = grads[dst.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
+        grads_src = grads[dst.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
+        grads_dst = grads[src.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
 
         # Take dot product to eliminate embedding_dim dimension
         # (batch_size, num_heads, num_samples)
@@ -304,20 +305,24 @@ class MADEdgePredictor(nn.Module):
         ).view(batch_size, self.num_heads, self.num_samples)
 
         # (batch_size, num_heads, num_samples)
-        edge_label = self.label_nn.weight * self.adj[src0, dst0]
-        logits = edge_label + src_contrib + dst_contrib
+        src_logits = self.label_nn.weight * self.adj[src0, dst.view(batch_size, 1, 1)] + src_contrib
+        dst_logits = self.label_nn.weight * self.adj[src.view(batch_size, 1, 1), dst0] + dst_contrib
+
+        # (batch_size, num_heads, num_samples * 2)
+        logits = torch.cat([src_logits, dst_logits], dim=2)
 
         # Weigh according to softmin distance, sentinals thing
         # Sum across num_samples should be 1.
 
-        # (batch_size, num_heads, num_samples)
-        norm = torch.norm(torch.cat([src_dist, dst_dist], dim=3), dim=3)
-        # (batch_size, num_heads, num_samples + num_sentinals)
-        norm_sentinals = torch.cat([norm, torch.zeros((batch_size, self.num_heads, self.num_sentinals), device=device)], dim=2)
+        # (batch_size, num_heads, 2 * num_samples)
+        norm = torch.norm(torch.cat([src_dist, dst_dist], dim=2), dim=3)
+        # (batch_size, num_heads, 2 * num_samples + num_sentinals)
+        norm_sentinals = torch.cat([norm, torch.ones((batch_size, self.num_heads, self.num_sentinals), device=device)], dim=2)
 
         # Get softmax weights, strip out sentinals
-        # (batch_size, num_heads, num_samples)
-        logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :self.num_samples]
+        # (batch_size, num_heads, num_samples * 2)
+        # logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :self.num_samples*2]
+        logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :self.num_samples*2]
 
         # Weigh logits according to weights and take mean
         # (batch_size, num_heads)

@@ -17,7 +17,7 @@ from global_attention_layer import LowRankAttention, weight_init
 def get_model(model_name: str) -> type:
     models = [GCN, GAT, MAD, MAD_GCN, GCN_LRGA, MAD_GCN_LRGA]
     for m in models:
-        if m.__name__ == model_name:
+        if m.__name__.lower() == model_name.lower():
             return m
     assert False, f'Could not find model {model_name}!'
 
@@ -239,7 +239,7 @@ class MAD_GCN(nn.Module):
         num_layers=2,
         dropout=0.5,
         cache=True,
-        field_NN: FieldType = FieldType.EXTERNAL,
+        field_NN: FieldType = FieldType.NONE,
     ):
 
         super().__init__()
