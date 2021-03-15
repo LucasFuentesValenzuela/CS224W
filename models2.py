@@ -1,0 +1,327 @@
+import argparse
+import torch
+from torch import nn
+import torch.nn.functional as F
+import torch_sparse
+from typing import Tuple, Optional
+# Some built in PyG layers
+from torch_geometric.nn import GCNConv, GATConv
+from predictors import LinkPredictor
+
+
+
+def get_model(model_name: str) -> type:
+    models = [GCN_Linear, MAD_Model, MAD_GCN]
+    for m in models:
+        if m.__name__ == model_name:
+            return m
+    assert False, f'Could not find model {model_name}!'
+
+
+class GCN_Linear(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        adj_t: torch_sparse.SparseTensor,
+        output_dim=256,
+        dropout=0.5,
+    ):
+        super(GCN_Linear, self).__init__()
+
+        self.network = GCN(num_nodes, output_dim=output_dim, dropout=dropout)
+        self.predictor = LinkPredictor(
+            in_channels=output_dim,
+            hidden_channels=output_dim,
+            out_channels=1,
+            num_layers=2,
+            dropout=dropout,
+        )
+
+    def forward(
+        self,
+        adj_t: torch_sparse.SparseTensor,
+        edges: torch.Tensor
+    ) -> torch.Tensor:
+        x = self.network(adj_t, edges)
+        return self.predictor(x)
+
+
+
+class GCN(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        embedding_dim=256,
+        hidden_dim=256,
+        output_dim=256,
+        num_layers=2,
+        dropout=0.5,
+        cache=True,
+    ):
+        super().__init__()
+
+        # architecture
+        self.dropout = dropout
+
+        # layers
+        self.embedding = nn.Embedding(
+            num_nodes, embedding_dim)
+
+        nn.init.xavier_uniform_(self.embedding.weight)
+
+        conv_layers = [GCNConv(embedding_dim, hidden_dim, cached=cache)] + \
+            [GCNConv(hidden_dim, hidden_dim, cached=cache) for _ in range(num_layers-2)] + \
+            [GCNConv(hidden_dim, output_dim, cached=cache)]
+        self.convs = nn.ModuleList(conv_layers)
+
+        bns_layers = [nn.BatchNorm1d(num_features=hidden_dim)
+                      for _ in range(num_layers)]
+        self.bns = nn.ModuleList(bns_layers)
+
+        # predictor
+        self.predictor = LinkPredictor(
+            output_dim, hidden_dim, 1, num_layers, self.dropout)
+
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+        for bn in self.bns:
+            bn.reset_parameters()
+
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+        '''
+        Inputs:
+            adj_t: SparseTensor shape (num_nodes, num_nodes)
+            edges: Tensor shape (2, num_query_edges)
+        Outputs:
+            prediction: Tensor shape (num_query_edges,) with scores between 0 and 1 for each edge in `edges`.
+        '''
+
+        # Initial embedding lookup
+        # shape num_nodes, embedding_dim
+        x = self.embedding.weight
+
+        # Building new node embeddings with GCNConv layers
+        for k in range(len(self.convs)-1):
+            x = self.convs[k](x, adj_t)
+            # x = self.bns[k](x)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.convs[-1](x, adj_t)
+
+        return self.predictor(x, edges)
+
+
+class MAD_GCN(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        adj_t: torch_sparse.SparseTensor,
+        num_heads: int = 12,
+        mad_size: int = 12,
+        hidden_size: int = 12,
+        embed_size: int = 12,
+        dropout: float = 0.5,
+    ):
+        super(MAD_GCN, self).__init__()
+
+        self.num_nodes = num_nodes
+        self.num_heads = num_heads
+        self.mad_size = mad_size
+
+        self.network = GCN(
+            num_nodes=num_nodes,
+            embedding_dim=num_heads * embed_size,
+            hidden_dim=num_heads * hidden_size,
+            output_dim=num_heads * mad_size * 2,
+            num_layers=2,
+            dropout=dropout,
+        )
+        self.predictor = MADEdgePredictor(
+            num_nodes=num_nodes,
+            adj_t=adj_t,
+            num_heads=num_heads,
+            embedding_dim=mad_size,
+            num_sentinals=8,
+            num_samples=8,
+        )
+
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+        x = self.network(adj_t, edges)
+        x = torch.clone(x, memory_format=torch.contiguous_format)
+        x = torch.reshape(x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
+        pos = x[:, :, :self.mad_size]
+        grad = x[:, :, self.mad_size:]
+        return self.predictor(pos, grad, edges)
+
+
+
+class MAD_Model(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        adj_t: torch_sparse.SparseTensor,
+        num_heads: int = 12,
+        embedding_dim: int = 12,
+    ):
+        super(MAD_Model, self).__init__()
+        self.pos_embs = nn.Parameter(
+            torch.empty((num_nodes, num_heads, embedding_dim)))
+
+        self.grad_embs = nn.Parameter(
+            torch.empty((num_nodes, num_heads, embedding_dim)))
+
+        self.predictor = MADEdgePredictor(
+            num_nodes=num_nodes,
+            adj_t=adj_t,
+            num_heads=num_heads,
+            embedding_dim=embedding_dim,
+            num_sentinals=8,
+            num_samples=8,
+        )
+
+        nn.init.xavier_uniform_(self.pos_embs)
+        nn.init.xavier_uniform_(self.grad_embs)
+
+    def forward(
+        self,
+        adj_t: torch_sparse.SparseTensor,
+        edges: torch.Tensor,
+    ) -> torch.Tensor:
+        '''
+        Inputs:
+            adj_t: sparse tensor containing graph adjacency matrix.
+            edges: Tensor of shape (2, batch_size)
+
+        Returns:
+            predictions: Tensor of shape (batch_size,)
+        '''
+        pos = self.pos_embs
+        grads = self.grad_embs
+        return self.predictor(pos, grads, edges)
+
+
+class MADEdgePredictor(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        adj_t: torch_sparse.SparseTensor,
+        num_heads: int,
+        embedding_dim: int,
+        num_sentinals: int,
+        num_samples: int,
+    ):
+        super(MADEdgePredictor, self).__init__()
+        self.num_heads = num_heads
+        self.num_nodes = num_nodes
+        self.num_sentinals = num_sentinals
+        self.embedding_dim = embedding_dim
+        self.num_samples = num_samples
+
+        self.label_nn = nn.Linear(1, 1, bias=False) # nn to apply to adj_t labels
+        self.adj = adj_t.to_dense() * 2 - 1 # Scale from -1 to 1
+
+        # nn.init.xavier_normal(self.label_nn.weight)
+        self.label_nn.weight = nn.Parameter(torch.ones_like(self.label_nn.weight))
+
+
+    def forward(self, pos: torch.Tensor, grads: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
+        '''
+        pos Tensor of shape (num_nodes, num_heads, embedding_dim)
+        grads Tensor of shape (num_nodes, num_heads, embedding_dim)
+        edges Tensor of shape (2, batch_size)
+        '''
+
+        # Model link prediction problem as:
+        # Pred = r(pos[src_node], pos[dst_node])
+        #     ~=~ r(pos[src0], pos[dst0])
+        #         + (pos[src] - pos[src0]) grads(src)
+        #         + (pos[dst] - pos[dst0]) grads(dst)
+        # Average preds over several heads, weighed by distance
+        # of [src, dst] to [src0, dst0]
+
+        device = edges.device
+
+        batch_size = edges.shape[1]
+        src = edges[0] # (batch_size,)
+        dst = edges[1] # (batch_size,)
+
+        heads_idx = torch.arange(0, self.num_heads) # (num_heads,)
+
+        # (batch_size, num_heads, embedding_dim)
+        pos_src = pos[src.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
+        pos_dst = pos[dst.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
+
+        # Indices of sampled nodes for gradient estimation.
+        # (batch_size, num_heads, num_samples)
+        if self.training:
+            # At training time just sample randomly.
+            src0 = torch.randint(0, self.num_nodes, size=(batch_size, self.num_heads, self.num_samples), device=device)
+            dst0 = torch.randint(0, self.num_nodes, size=(batch_size, self.num_heads, self.num_samples), device=device)
+        else:
+            # Grab TopK closest src0 and dst0 nodes to src and dst
+            # (num_nodes, batch_size, num_heads)
+            src_norm = torch.norm(
+                pos.view(self.num_nodes, 1, self.num_heads, self.embedding_dim) \
+                - pos_src.view(1, batch_size, self.num_heads, self.embedding_dim),
+                dim=3,
+            )
+            dst_norm = torch.norm(
+                pos.view(self.num_nodes, 1, self.num_heads, self.embedding_dim) \
+                - pos_dst.view(1, batch_size, self.num_heads, self.embedding_dim),
+                dim=3,
+            )
+            # (num_samples, batch_size, num_heads)
+            src0 = torch.topk(src_norm, k=self.num_samples+1, largest=False, sorted=False, dim=0).indices[1:]
+            dst0 = torch.topk(dst_norm, k=self.num_samples+1, largest=False, sorted=False, dim=0).indices[1:]
+            # (batch_size, num_heads, num_samples)
+            src0 = src0.permute(1, 2, 0)
+            dst0 = dst0.permute(1, 2, 0)
+
+        # (batch_size, num_heads, num_samples, embedding_dim)
+        pos_src0 = pos[src0, heads_idx.view(1, self.num_heads, 1)]
+        pos_dst0 = pos[dst0, heads_idx.view(1, self.num_heads, 1)]
+
+        # pos[src] - pos[src0]
+        # (batch_size, num_heads, num_samples, embedding_dim)
+        src_dist = pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim) - pos_src0
+        dst_dist = pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim) - pos_dst0
+
+        # grads(src), grads(dst)
+        # (batch_size, num_heads, embedding_dim)
+        grads_src = grads[src.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
+        grads_dst = grads[dst.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
+
+        # Take dot product to eliminate embedding_dim dimension
+        # (batch_size, num_heads, num_samples)
+        src_contrib = torch.matmul(
+            src_dist.view(batch_size, self.num_heads, self.num_samples, 1, self.embedding_dim),
+            grads_src.view(batch_size, self.num_heads, 1, self.embedding_dim, 1)
+        ).view(batch_size, self.num_heads, self.num_samples)
+        dst_contrib = torch.matmul(
+            dst_dist.view(batch_size, self.num_heads, self.num_samples, 1, self.embedding_dim),
+            grads_dst.view(batch_size, self.num_heads, 1, self.embedding_dim, 1)
+        ).view(batch_size, self.num_heads, self.num_samples)
+
+        # (batch_size, num_heads, num_samples)
+        edge_label = self.label_nn.weight * self.adj[src0, dst0]
+        logits = edge_label + src_contrib + dst_contrib
+
+        # Weigh according to softmin distance, sentinals thing
+        # Sum across num_samples should be 1.
+
+        # (batch_size, num_heads, num_samples)
+        norm = torch.norm(torch.cat([src_dist, dst_dist], dim=3), dim=3)
+        # (batch_size, num_heads, num_samples + num_sentinals)
+        norm_sentinals = torch.cat([norm, torch.zeros((batch_size, self.num_heads, self.num_sentinals), device=device)], dim=2)
+
+        # Get softmax weights, strip out sentinals
+        # (batch_size, num_heads, num_samples)
+        logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :self.num_samples]
+
+        # Weigh logits according to weights and take mean
+        # (batch_size, num_heads)
+        weighed_logits = torch.sum(logit_weight * logits, dim=2)
+
+        output_logits = torch.mean(weighed_logits, dim=1)
+        return torch.sigmoid(output_logits)
