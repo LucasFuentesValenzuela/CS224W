@@ -453,19 +453,31 @@ class MADEdgePredictor(nn.Module):
         embedding_dim: int,
         num_sentinals: int,
         num_samples: int,
+        distance='inner'
     ):
+        '''
+        distance: how to compute the weighting of different samples
+        '''
+
         super(MADEdgePredictor, self).__init__()
         self.num_heads = num_heads
         self.num_nodes = num_nodes
         self.num_sentinals = num_sentinals
         self.embedding_dim = embedding_dim
         self.num_samples = num_samples
+        self.distance = distance
 
         self.label_nn = nn.Linear(1, 1, bias=False) # nn to apply to adj_t labels
         self.adj = adj_t.to_dense() * 2 - 1 # Scale from -1 to 1
 
         # nn.init.xavier_normal(self.label_nn.weight)
         self.label_nn.weight = nn.Parameter(torch.ones_like(self.label_nn.weight))
+
+        assert self.distance in ['euclidian', 'inner'], 'Distance metric invalid'
+
+        # weighted inner product xTWx 
+        if self.distance=='inner':
+            self.W = nn.Linear(self.embedding_dim, self.embedding_dim)
 
 
     def forward(self, pos: torch.Tensor, grads: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
@@ -557,10 +569,23 @@ class MADEdgePredictor(nn.Module):
         # Weigh according to softmin distance, sentinals thing
         # Sum across num_samples should be 1.
 
-        # (batch_size, num_heads, 2 * num_samples)
-        norm = torch.norm(torch.cat([src_dist, dst_dist], dim=2), dim=3)
+        if self.distance=='euclidian':
+            # (batch_size, num_heads, 2 * num_samples)
+            distance = torch.norm(torch.cat([src_dist, dst_dist], dim=2), dim=3)
+        elif self.distance=='inner':
+            inner_src = torch.sum(
+                pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim)*self.W(pos_src0),
+                dim=3
+            )
+
+            inner_dst = torch.sum(
+                pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim)*self.W(pos_dst0),
+                dim=3
+            )
+            distance = torch.cat([inner_src, inner_dst], dim=2)
+
         # (batch_size, num_heads, 2 * num_samples + num_sentinals)
-        norm_sentinals = torch.cat([norm, torch.ones((batch_size, self.num_heads, self.num_sentinals), device=device)], dim=2)
+        norm_sentinals = torch.cat([distance, torch.ones((batch_size, self.num_heads, self.num_sentinals), device=device)], dim=2)
 
         # Get softmax weights, strip out sentinals
         # (batch_size, num_heads, num_samples * 2)
