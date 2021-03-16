@@ -58,7 +58,7 @@ class SAGE_Linear(nn.Module):
 
         self.network = SAGE(
             num_nodes=num_nodes,
-            out_channels=output_dim,
+            output_dim=output_dim,
             dropout=dropout,
         )
         self.predictor = LinkPredictor(
@@ -139,8 +139,8 @@ class SAGE(torch.nn.Module):
         self,
         num_nodes: int,
         embedding_dim: int = 256,
-        hidden_channels: int = 256,
-        out_channels: int = 256,
+        hidden_dim: int = 256,
+        output_dim: int = 256,
         num_layers: int = 2,
         dropout: float = 0.5
     ):
@@ -150,10 +150,10 @@ class SAGE(torch.nn.Module):
             num_nodes, embedding_dim)
 
         self.convs = torch.nn.ModuleList()
-        self.convs.append(SAGEConv(embedding_dim, hidden_channels))
+        self.convs.append(SAGEConv(embedding_dim, hidden_dim))
         for _ in range(num_layers - 2):
-            self.convs.append(SAGEConv(hidden_channels, hidden_channels))
-        self.convs.append(SAGEConv(hidden_channels, out_channels))
+            self.convs.append(SAGEConv(hidden_dim, hidden_dim))
+        self.convs.append(SAGEConv(hidden_dim, output_dim))
 
         self.dropout = dropout
 
@@ -283,7 +283,7 @@ class MAD_SAGE(nn.Module):
             num_nodes=num_nodes,
             embedding_dim=embed_size,
             hidden_dim=hidden_size,
-            output_idm=num_heads * mad_size * 2,
+            output_dim=num_heads * mad_size * 2,
             num_layers=2,
             dropout=dropout,
         )
@@ -419,8 +419,9 @@ class MAD_Model(nn.Module):
             adj_t=adj_t,
             num_heads=num_heads,
             embedding_dim=embedding_dim,
-            num_sentinals=8,
+            num_sentinals=0,
             num_samples=8,
+            distance="inner",
         )
 
         nn.init.xavier_uniform_(self.pos_embs)
@@ -453,7 +454,7 @@ class MADEdgePredictor(nn.Module):
         embedding_dim: int,
         num_sentinals: int,
         num_samples: int,
-        distance='inner'
+        distance: str = 'inner',
     ):
         '''
         distance: how to compute the weighting of different samples
@@ -475,7 +476,7 @@ class MADEdgePredictor(nn.Module):
 
         assert self.distance in ['euclidian', 'inner'], 'Distance metric invalid'
 
-        # weighted inner product xTWx 
+        # weighted inner product xTWx
         if self.distance=='inner':
             self.W = nn.Linear(
                 self.embedding_dim*self.num_heads, self.embedding_dim*self.num_heads)
@@ -594,7 +595,10 @@ class MADEdgePredictor(nn.Module):
             distance = torch.cat([inner_src, inner_dst], dim=2)
 
         # (batch_size, num_heads, 2 * num_samples + num_sentinals)
-        norm_sentinals = torch.cat([distance, torch.ones((batch_size, self.num_heads, self.num_sentinals), device=device)], dim=2)
+        if self.num_sentinals == 0:
+            norm_sentinals = distance
+        else:
+            norm_sentinals = torch.cat([distance, torch.ones((batch_size, self.num_heads, self.num_sentinals), device=device)], dim=2)
 
         # Get softmax weights, strip out sentinals
         # (batch_size, num_heads, num_samples * 2)
