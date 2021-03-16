@@ -143,6 +143,7 @@ def main():
     # load from checkpoint if path specified
     assert args.load_path is not None
     model = model_utils.load_model(model, args.load_path)
+    print(f"Parameters: {model_utils.count_parameters(model)}")
     model.eval()
 
     # Move model to GPU if necessary

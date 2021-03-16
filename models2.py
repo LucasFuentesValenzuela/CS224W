@@ -5,13 +5,13 @@ import torch.nn.functional as F
 import torch_sparse
 from typing import Tuple, Optional
 # Some built in PyG layers
-from torch_geometric.nn import GCNConv, GATConv
+from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 from predictors import LinkPredictor
 
 
 
 def get_model(model_name: str) -> type:
-    models = [GCN_Linear, MAD_Model, MAD_GCN, MAD_Field_NN]
+    models = [GCN_Linear, MAD_Model, MAD_GCN, MAD_Field_NN, MAD_GCN_Field_NN, MAD_SAGE, SAGE_Linear]
     for m in models:
         if m.__name__.lower() == model_name.lower():
             return m
@@ -43,7 +43,40 @@ class GCN_Linear(nn.Module):
         edges: torch.Tensor
     ) -> torch.Tensor:
         x = self.network(adj_t, edges)
-        return self.predictor(x)
+        return self.predictor(x, edges)
+
+
+class SAGE_Linear(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        adj_t: torch_sparse.SparseTensor,
+        output_dim=256,
+        dropout=0.5,
+    ):
+        super(SAGE_Linear, self).__init__()
+
+        self.network = SAGE(
+            num_nodes=num_nodes,
+            out_channels=output_dim,
+            dropout=dropout,
+        )
+        self.predictor = LinkPredictor(
+            in_channels=output_dim,
+            hidden_channels=output_dim,
+            out_channels=1,
+            num_layers=2,
+            dropout=dropout,
+        )
+
+    def forward(
+        self,
+        adj_t: torch_sparse.SparseTensor,
+        edges: torch.Tensor
+    ) -> torch.Tensor:
+        x = self.network(adj_t, edges)
+        return self.predictor(x, edges)
+
 
 
 
@@ -101,6 +134,43 @@ class GCN(nn.Module):
         return x
 
 
+class SAGE(torch.nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        embedding_dim: int = 256,
+        hidden_channels: int = 256,
+        out_channels: int = 256,
+        num_layers: int = 2,
+        dropout: float = 0.5
+    ):
+        super(SAGE, self).__init__()
+
+        self.embedding = nn.Embedding(
+            num_nodes, embedding_dim)
+
+        self.convs = torch.nn.ModuleList()
+        self.convs.append(SAGEConv(embedding_dim, hidden_channels))
+        for _ in range(num_layers - 2):
+            self.convs.append(SAGEConv(hidden_channels, hidden_channels))
+        self.convs.append(SAGEConv(hidden_channels, out_channels))
+
+        self.dropout = dropout
+
+    def reset_parameters(self):
+        for conv in self.convs:
+            conv.reset_parameters()
+
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor):
+        x = self.embedding.weight
+
+        for conv in self.convs[:-1]:
+            x = conv(x, adj_t)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.convs[-1](x, adj_t)
+        return x
+
 class MAD_GCN(nn.Module):
     def __init__(
         self,
@@ -134,13 +204,108 @@ class MAD_GCN(nn.Module):
             num_sentinals=8,
             num_samples=8,
         )
+        self.gcn_cache = None
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+
         x = self.network(adj_t, edges)
-        x = torch.clone(x, memory_format=torch.contiguous_format)
         x = torch.reshape(x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
+        x = torch.clone(x, memory_format=torch.contiguous_format)
         pos = x[:, :, :self.mad_size]
         grad = x[:, :, self.mad_size:]
+        return self.predictor(pos, grad, edges)
+
+
+class MAD_SAGE(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        adj_t: torch_sparse.SparseTensor,
+        num_heads: int = 12,
+        mad_size: int = 12,
+        hidden_size: int = 256,
+        embed_size: int = 200,
+        dropout: float = 0.5,
+    ):
+        super(MAD_SAGE, self).__init__()
+
+        self.num_nodes = num_nodes
+        self.num_heads = num_heads
+        self.mad_size = mad_size
+
+        self.network = SAGE(
+            num_nodes=num_nodes,
+            embedding_dim=embed_size,
+            hidden_dim=hidden_size,
+            output_idm=num_heads * mad_size * 2,
+            num_layers=2,
+            dropout=dropout,
+        )
+        self.predictor = MADEdgePredictor(
+            num_nodes=num_nodes,
+            adj_t=adj_t,
+            num_heads=num_heads,
+            embedding_dim=mad_size,
+            num_sentinals=8,
+            num_samples=8,
+        )
+        self.gcn_cache = None
+
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+
+        x = self.network(adj_t, edges)
+        x = torch.reshape(x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
+        x = torch.clone(x, memory_format=torch.contiguous_format)
+        pos = x[:, :, :self.mad_size]
+        grad = x[:, :, self.mad_size:]
+        return self.predictor(pos, grad, edges)
+
+
+
+class MAD_GCN_Field_NN(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        adj_t: torch_sparse.SparseTensor,
+        num_heads: int = 12,
+        mad_size: int = 12,
+        hidden_size: int = 256,
+        embed_size: int = 200,
+        dropout: float = 0.5,
+    ):
+        super(MAD_GCN_Field_NN, self).__init__()
+
+        self.num_nodes = num_nodes
+        self.num_heads = num_heads
+        self.mad_size = mad_size
+
+        self.network = GCN(
+            num_nodes=num_nodes,
+            embedding_dim=embed_size,
+            hidden_dim=hidden_size,
+            output_dim=num_heads * mad_size,
+            num_layers=2,
+            dropout=dropout,
+        )
+        self.predictor = MADEdgePredictor(
+            num_nodes=num_nodes,
+            adj_t=adj_t,
+            num_heads=num_heads,
+            embedding_dim=mad_size,
+            num_sentinals=8,
+            num_samples=8,
+        )
+
+        self.field_nn = FieldPredictor(mad_size, num_heads, num_nodes, dropout=0.5, num_layers=3)
+        self.gcn_cache = None
+
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+
+        x = self.network(adj_t, edges)
+        x = torch.reshape(x, (self.num_nodes, self.num_heads, self.mad_size))
+        x = torch.clone(x, memory_format=torch.contiguous_format)
+        pos = x
+        grad = self.field_nn(x)
         return self.predictor(pos, grad, edges)
 
 
