@@ -477,7 +477,8 @@ class MADEdgePredictor(nn.Module):
 
         # weighted inner product xTWx 
         if self.distance=='inner':
-            self.W = nn.Linear(self.embedding_dim, self.embedding_dim)
+            self.W = nn.Linear(
+                self.embedding_dim*self.num_heads, self.embedding_dim*self.num_heads)
 
 
     def forward(self, pos: torch.Tensor, grads: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
@@ -573,17 +574,23 @@ class MADEdgePredictor(nn.Module):
             # (batch_size, num_heads, 2 * num_samples)
             distance = torch.norm(torch.cat([src_dist, dst_dist], dim=2), dim=3)
         elif self.distance=='inner':
+            # (batch_size, num_heads, 1, embedding_dim)
             pos_src_ = pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim)
+            pos_src0_ = pos_src0.view(batch_size, self.num_sentinals, self.num_heads*self.embedding_dim)
             inner_src = torch.sum(
-                pos_src_*self.W(pos_src0),
+                pos_src_*self.W(pos_src0_).view(batch_size, self.num_heads, self.num_sentinals, self.embedding_dim),
                 dim=3
-            )/(torch.norm(pos_src_, dim = 3)*(torch.norm(self.W(pos_src0), dim=3)))
+            )/(torch.norm(pos_src_, dim = 3)*(torch.norm(
+                self.W(pos_src0_).view(batch_size, self.num_heads, self.num_sentinals, self.embedding_dim), dim=3)))
 
             pos_dst_ = pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim)
+            pos_dst0_ = pos_dst0.view(batch_size, self.num_sentinals, self.num_heads*self.embedding_dim)
             inner_dst = torch.sum(
-                pos_dst_*self.W(pos_dst0),
+                pos_dst_*self.W(pos_dst0_).view(batch_size, self.num_heads, self.num_sentinals, self.embedding_dim),
                 dim=3
-            )/(torch.norm(pos_dst_, dim = 3)*(torch.norm(self.W(pos_dst0), dim=3)))
+            )/(torch.norm(pos_dst_, dim = 3)*(torch.norm(
+                self.W(pos_dst0_).view(batch_size, self.num_heads, self.num_sentinals, self.embedding_dim), dim=3)))
+
             distance = torch.cat([inner_src, inner_dst], dim=2)
 
         # (batch_size, num_heads, 2 * num_samples + num_sentinals)
