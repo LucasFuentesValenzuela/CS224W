@@ -573,15 +573,17 @@ class MADEdgePredictor(nn.Module):
             # (batch_size, num_heads, 2 * num_samples)
             distance = torch.norm(torch.cat([src_dist, dst_dist], dim=2), dim=3)
         elif self.distance=='inner':
+            pos_src_ = pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim)
             inner_src = torch.sum(
-                pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim)*self.W(pos_src0),
+                pos_src_*self.W(pos_src0),
                 dim=3
-            )
+            )/(torch.norm(pos_src_, dim = 3)*(torch.norm(self.W(pos_src0), dim=3)))
 
+            pos_dst_ = pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim)
             inner_dst = torch.sum(
-                pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim)*self.W(pos_dst0),
+                pos_dst_*self.W(pos_dst0),
                 dim=3
-            )
+            )/(torch.norm(pos_dst_, dim = 3)*(torch.norm(self.W(pos_dst0), dim=3)))
             distance = torch.cat([inner_src, inner_dst], dim=2)
 
         # (batch_size, num_heads, 2 * num_samples + num_sentinals)
