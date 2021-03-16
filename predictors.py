@@ -87,7 +87,7 @@ class MADpredictor(torch.nn.Module):
             self.field = nn.Parameter(
                 torch.rand((n_heads, n_nodes, embedding_dim)))
         elif field_NN == FieldType.NN:
-            self.field = Field_predictor(embedding_dim, n_heads, n_nodes)
+            self.field = FieldPredictor(embedding_dim, n_heads, n_nodes)
         elif field_NN == FieldType.EXTERNAL:
             # Field values are second half of embeds at forward pass.
             self.field = None
@@ -207,7 +207,7 @@ class MADpredictor(torch.nn.Module):
 
         return logits, diff
 
-class Field_predictor(torch.nn.Module):
+class FieldPredictor(torch.nn.Module):
     def __init__(
         self,
         embedding_dim,

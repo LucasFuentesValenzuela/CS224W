@@ -11,7 +11,7 @@ from predictors import LinkPredictor
 
 
 def get_model(model_name: str) -> type:
-    models = [GCN_Linear, MAD_Model, MAD_GCN]
+    models = [GCN_Linear, MAD_Model, MAD_GCN, MAD_Field_NN]
     for m in models:
         if m.__name__.lower() == model_name.lower():
             return m
@@ -74,19 +74,9 @@ class GCN(nn.Module):
             [GCNConv(hidden_dim, output_dim, cached=cache)]
         self.convs = nn.ModuleList(conv_layers)
 
-        bns_layers = [nn.BatchNorm1d(num_features=hidden_dim)
-                      for _ in range(num_layers)]
-        self.bns = nn.ModuleList(bns_layers)
-
-        # predictor
-        self.predictor = LinkPredictor(
-            output_dim, hidden_dim, 1, num_layers, self.dropout)
-
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
-        for bn in self.bns:
-            bn.reset_parameters()
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
@@ -104,12 +94,11 @@ class GCN(nn.Module):
         # Building new node embeddings with GCNConv layers
         for k in range(len(self.convs)-1):
             x = self.convs[k](x, adj_t)
-            # x = self.bns[k](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.convs[-1](x, adj_t)
 
-        return self.predictor(x, edges)
+        return x
 
 
 class MAD_GCN(nn.Module):
@@ -119,8 +108,8 @@ class MAD_GCN(nn.Module):
         adj_t: torch_sparse.SparseTensor,
         num_heads: int = 12,
         mad_size: int = 12,
-        hidden_size: int = 12,
-        embed_size: int = 12,
+        hidden_size: int = 256,
+        embed_size: int = 200,
         dropout: float = 0.5,
     ):
         super(MAD_GCN, self).__init__()
@@ -131,8 +120,8 @@ class MAD_GCN(nn.Module):
 
         self.network = GCN(
             num_nodes=num_nodes,
-            embedding_dim=num_heads * embed_size,
-            hidden_dim=num_heads * hidden_size,
+            embedding_dim=embed_size,
+            hidden_dim=hidden_size,
             output_dim=num_heads * mad_size * 2,
             num_layers=2,
             dropout=dropout,
@@ -154,6 +143,49 @@ class MAD_GCN(nn.Module):
         grad = x[:, :, self.mad_size:]
         return self.predictor(pos, grad, edges)
 
+
+
+class MAD_Field_NN(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        adj_t: torch_sparse.SparseTensor,
+        num_heads: int = 12,
+        embedding_dim: int = 12,
+    ):
+        super(MAD_Field_NN, self).__init__()
+        self.pos_embs = nn.Parameter(
+            torch.empty((num_nodes, num_heads, embedding_dim)))
+
+        self.field_nn = FieldPredictor(embedding_dim, num_heads, num_nodes, dropout=0.5, num_layers=3)
+
+        self.predictor = MADEdgePredictor(
+            num_nodes=num_nodes,
+            adj_t=adj_t,
+            num_heads=num_heads,
+            embedding_dim=embedding_dim,
+            num_sentinals=8,
+            num_samples=8,
+        )
+
+        nn.init.xavier_uniform_(self.pos_embs)
+
+    def forward(
+        self,
+        adj_t: torch_sparse.SparseTensor,
+        edges: torch.Tensor,
+    ) -> torch.Tensor:
+        '''
+        Inputs:
+            adj_t: sparse tensor containing graph adjacency matrix.
+            edges: Tensor of shape (2, batch_size)
+
+        Returns:
+            predictions: Tensor of shape (batch_size,)
+        '''
+        pos = self.pos_embs
+        grads = self.field_nn(pos)
+        return self.predictor(pos, grads, edges)
 
 
 class MAD_Model(nn.Module):
@@ -330,3 +362,56 @@ class MADEdgePredictor(nn.Module):
 
         output_logits = torch.mean(weighed_logits, dim=1)
         return torch.sigmoid(output_logits)
+
+
+
+class FieldPredictor(torch.nn.Module):
+    def __init__(
+        self,
+        embedding_dim,
+        n_heads,
+        n_nodes,
+        dropout=.5,
+        num_layers=2
+    ):
+        # shape of field
+        # (n_heads, n_nodes, embedding_dim)
+
+        super().__init__()
+
+        self.embedding_dim = embedding_dim
+        self.n_heads = n_heads
+        self.n_nodes = n_nodes
+        self.dropout = dropout
+
+        self.lins = torch.nn.ModuleList()
+        self.lins.append(torch.nn.Linear(n_heads*embedding_dim, n_heads*embedding_dim))
+        for _ in range(num_layers - 2):
+            self.lins.append(torch.nn.Linear(n_heads*embedding_dim, n_heads*embedding_dim))
+        self.lins.append(torch.nn.Linear(n_heads*embedding_dim, n_heads*embedding_dim))
+
+        bns_layers = [nn.BatchNorm1d(num_features=embedding_dim)
+                        for _ in range(num_layers)]
+        self.bns = nn.ModuleList(bns_layers)
+        self.dropout = dropout
+
+    def reset_parameters(self):
+        for lin in self.lins:
+            lin.reset_parameters()
+
+    def forward(self, x):
+        '''
+        x are shape (num_nodes, num_heads, embedding_dim)
+        '''
+        # reshape to (n_nodes, n_heads*embedding_dim)
+        x = x.view(self.n_nodes, self.n_heads * self.embedding_dim)
+
+        for lin in self.lins[:-1]:
+            x = lin(x)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.lins[-1](x)
+
+        # reshape to (n_heads, n_nodes, embedding_dim)
+        x = x.view(self.n_nodes, self.n_heads, self.embedding_dim)
+        return x

@@ -13,7 +13,7 @@ from tqdm import tqdm  # type: ignore
 from ogb.linkproppred import Evaluator
 
 from args import *
-import models
+import models2 as models
 import model_utils
 
 
@@ -138,7 +138,7 @@ def main():
         graphs['test'] = valid_graph
 
     # Initialize a model
-    model = models.get_model(args.model)(graphs['validation'].x.shape, graphs['validation'].adj_t.to(device))
+    model = models.get_model(args.model)(graphs['validation'].num_nodes, graphs['validation'].adj_t.to(device))
 
     # load from checkpoint if path specified
     assert args.load_path is not None
