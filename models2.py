@@ -421,6 +421,7 @@ class MAD_Model(nn.Module):
             embedding_dim=embedding_dim,
             num_sentinals=0,
             num_samples=8,
+            sentinal_dist=1,
             distance="inner",
         )
 
@@ -454,6 +455,7 @@ class MADEdgePredictor(nn.Module):
         embedding_dim: int,
         num_sentinals: int,
         num_samples: int,
+        sentinal_dist: float = 1.,
         distance: str = 'inner',
     ):
         '''
@@ -467,6 +469,7 @@ class MADEdgePredictor(nn.Module):
         self.embedding_dim = embedding_dim
         self.num_samples = num_samples
         self.distance = distance
+        self.sentinal_dist = sentinal_dist
 
         self.label_nn = nn.Linear(1, 1, bias=False) # nn to apply to adj_t labels
         self.adj = adj_t.to_dense() * 2 - 1 # Scale from -1 to 1
@@ -603,7 +606,7 @@ class MADEdgePredictor(nn.Module):
         if self.num_sentinals == 0:
             norm_sentinals = distance
         else:
-            norm_sentinals = torch.cat([distance, torch.ones((batch_size, self.num_heads, self.num_sentinals), device=device)], dim=2)
+            norm_sentinals = torch.cat([distance, torch.full((batch_size, self.num_heads, self.num_sentinals), self.sentinal_dist, device=device)], dim=2)
 
         # Get softmax weights, strip out sentinals
         # (batch_size, num_heads, num_samples * 2)
