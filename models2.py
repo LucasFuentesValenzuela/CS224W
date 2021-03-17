@@ -9,9 +9,9 @@ from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 from predictors import LinkPredictor
 
 
-
 def get_model(model_name: str) -> type:
-    models = [GCN_Linear, MAD_Model, MAD_GCN, MAD_Field_NN, MAD_GCN_Field_NN, MAD_SAGE, SAGE_Linear]
+    models = [GCN_Linear, MAD_Model, MAD_GCN, MAD_Field_NN,
+              MAD_GCN_Field_NN, MAD_SAGE, SAGE_Linear]
     for m in models:
         if m.__name__.lower() == model_name.lower():
             return m
@@ -76,8 +76,6 @@ class SAGE_Linear(nn.Module):
     ) -> torch.Tensor:
         x = self.network(adj_t, edges)
         return self.predictor(x, edges)
-
-
 
 
 class GCN(nn.Module):
@@ -172,7 +170,6 @@ class SAGE(torch.nn.Module):
         return x
 
 
-
 class MAD_SAGE(nn.Module):
     def __init__(
         self,
@@ -211,11 +208,13 @@ class MAD_SAGE(nn.Module):
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
 
         x = self.network(adj_t, edges)
-        x = torch.reshape(x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
+        x = torch.reshape(
+            x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
         x = torch.clone(x, memory_format=torch.contiguous_format)
         pos = x[:, :, :self.mad_size]
         grad = x[:, :, self.mad_size:]
         return self.predictor(pos, grad, edges)
+
 
 class MAD_GCN(nn.Module):
     def __init__(
@@ -255,7 +254,8 @@ class MAD_GCN(nn.Module):
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
 
         x = self.network(adj_t, edges)
-        x = torch.reshape(x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
+        x = torch.reshape(
+            x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
         x = torch.clone(x, memory_format=torch.contiguous_format)
         pos = x[:, :, :self.mad_size]
         grad = x[:, :, self.mad_size:]
@@ -300,12 +300,12 @@ class MAD_SAGE(nn.Module):
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
 
         x = self.network(adj_t, edges)
-        x = torch.reshape(x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
+        x = torch.reshape(
+            x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
         x = torch.clone(x, memory_format=torch.contiguous_format)
         pos = x[:, :, :self.mad_size]
         grad = x[:, :, self.mad_size:]
         return self.predictor(pos, grad, edges)
-
 
 
 class MAD_GCN_Field_NN(nn.Module):
@@ -342,7 +342,8 @@ class MAD_GCN_Field_NN(nn.Module):
             num_samples=8,
         )
 
-        self.field_nn = FieldPredictor(mad_size, num_heads, num_nodes, dropout=0.5, num_layers=3)
+        self.field_nn = FieldPredictor(
+            mad_size, num_heads, num_nodes, dropout=0.5, num_layers=3)
         self.gcn_cache = None
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
@@ -353,7 +354,6 @@ class MAD_GCN_Field_NN(nn.Module):
         pos = x
         grad = self.field_nn(x)
         return self.predictor(pos, grad, edges)
-
 
 
 class MAD_Field_NN(nn.Module):
@@ -368,7 +368,8 @@ class MAD_Field_NN(nn.Module):
         self.pos_embs = nn.Parameter(
             torch.empty((num_nodes, num_heads, embedding_dim)))
 
-        self.field_nn = FieldPredictor(embedding_dim, num_heads, num_nodes, dropout=0.5, num_layers=3)
+        self.field_nn = FieldPredictor(
+            embedding_dim, num_heads, num_nodes, dropout=0.5, num_layers=3)
 
         self.predictor = MADEdgePredictor(
             num_nodes=num_nodes,
@@ -446,6 +447,44 @@ class MAD_Model(nn.Module):
         return self.predictor(pos, grads, edges)
 
 
+class MADAttention(torch.nn.Module):
+    def __init__(self, embedding_dim, hidden_channels, out_channels, num_layers,
+                 dropout=.5):
+        super().__init__()
+
+        self.lins = torch.nn.ModuleList()
+        self.lins.append(torch.nn.Linear(2*embedding_dim, hidden_channels))
+        for _ in range(num_layers - 2):
+            self.lins.append(torch.nn.Linear(hidden_channels, hidden_channels))
+        self.lins.append(torch.nn.Linear(hidden_channels, out_channels))
+
+        self.dropout = dropout
+
+    def reset_parameters(self):
+        for lin in self.lins:
+            lin.reset_parameters()
+
+    def forward(self, x1, x0):
+        '''
+        shapes: 
+        # x [pos_src, pos_dst]: (batch_size, num_heads, embedding_dim)
+        # x0 [pos_src0, pos_dst0]: (batch_size, num_heads, num_samples, embedding_dim)
+        '''
+        x1_exp = torch.cat([x1.unsqueeze(2)
+                            for _ in range(x0.shape[2])], dim=2)
+        x = torch.cat([x1_exp, x0], dim=3)
+        for lin in self.lins[:-1]:
+            x = lin(x)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.lins[-1](x)
+        x = x.squeeze(3)
+        x = x/torch.sum(x, dim=2).unsqueeze(2)
+        # return torch.sigmoid(x).flatten()
+
+        return x
+
+
 class MADEdgePredictor(nn.Module):
     def __init__(
         self,
@@ -457,9 +496,15 @@ class MADEdgePredictor(nn.Module):
         num_samples: int,
         sentinal_dist: float = 1.,
         distance: str = 'euclidian',
+        sample_weights: str = 'attention',
+        num_weight_layers: int = 3,
+        hidden_weight_dim: int = 32
     ):
         '''
         distance: how to compute the weighting of different samples
+        sample_weights: how the weight for each sample is computed
+        num_weight_layers: how many layers in the weight NN
+        hidden_weight_dim: size of weight computing layer in the weight NN
         '''
 
         super(MADEdgePredictor, self).__init__()
@@ -470,19 +515,28 @@ class MADEdgePredictor(nn.Module):
         self.num_samples = num_samples
         self.distance = distance
         self.sentinal_dist = sentinal_dist
+        self.sample_weights = sample_weights
 
-        self.label_nn = nn.Linear(1, 1, bias=False) # nn to apply to adj_t labels
-        self.adj = adj_t.to_dense() * 2 - 1 # Scale from -1 to 1
+        # nn to apply to adj_t labels
+        self.label_nn = nn.Linear(1, 1, bias=False)
+        self.adj = adj_t.to_dense() * 2 - 1  # Scale from -1 to 1
 
         # nn.init.xavier_normal(self.label_nn.weight)
-        self.label_nn.weight = nn.Parameter(torch.ones_like(self.label_nn.weight))
+        self.label_nn.weight = nn.Parameter(
+            torch.ones_like(self.label_nn.weight))
 
-        assert self.distance in ['euclidian', 'inner', 'dot'], 'Distance metric invalid'
+        assert self.distance in ['euclidian',
+                                 'inner', 'dot'], 'Distance metric invalid'
+        assert self.sample_weights in [
+            'softmin', 'attention'], 'Sample weight method invalid'
 
         # weighted inner product xTWx
-        if self.distance=='inner':
+        if self.distance == 'inner':
             self.W = nn.Linear(self.embedding_dim, self.embedding_dim)
 
+        if self.sample_weights == 'attention':
+            self.atn = MADAttention(
+                embedding_dim, hidden_weight_dim, 1, num_weight_layers)
 
     def forward(self, pos: torch.Tensor, grads: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
         '''
@@ -503,56 +557,74 @@ class MADEdgePredictor(nn.Module):
         device = edges.device
 
         batch_size = edges.shape[1]
-        src = edges[0] # (batch_size,)
-        dst = edges[1] # (batch_size,)
+        src = edges[0]  # (batch_size,)
+        dst = edges[1]  # (batch_size,)
 
-        heads_idx = torch.arange(0, self.num_heads, device=device) # (num_heads,)
+        heads_idx = torch.arange(
+            0, self.num_heads, device=device)  # (num_heads,)
 
         # (batch_size, num_heads, embedding_dim)
-        pos_src = pos[src.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
-        pos_dst = pos[dst.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
+        pos_src = pos[src.view(batch_size, 1),
+                      heads_idx.view(1, self.num_heads)]
+        pos_dst = pos[dst.view(batch_size, 1),
+                      heads_idx.view(1, self.num_heads)]
 
         # Indices of sampled nodes for gradient estimation.
         # (batch_size, num_heads, num_samples)
         if self.training:
             # At training time just sample randomly.
-            src0 = torch.randint(0, self.num_nodes, size=(batch_size, self.num_heads, self.num_samples), device=device)
-            dst0 = torch.randint(0, self.num_nodes, size=(batch_size, self.num_heads, self.num_samples), device=device)
+            src0 = torch.randint(0, self.num_nodes, size=(
+                batch_size, self.num_heads, self.num_samples), device=device)
+            dst0 = torch.randint(0, self.num_nodes, size=(
+                batch_size, self.num_heads, self.num_samples), device=device)
         else:
             # Grab TopK closest src0 and dst0 nodes to src and dst
             if self.distance == 'euclidian' or self.distance == 'inner':
                 # (num_nodes, batch_size, num_heads)
                 src_norm = torch.norm(
-                    pos.view(self.num_nodes, 1, self.num_heads, self.embedding_dim) \
-                    - pos_src.view(1, batch_size, self.num_heads, self.embedding_dim),
+                    pos.view(self.num_nodes, 1, self.num_heads,
+                             self.embedding_dim)
+                    - pos_src.view(1, batch_size, self.num_heads,
+                                   self.embedding_dim),
                     dim=3,
                 )
                 dst_norm = torch.norm(
-                    pos.view(self.num_nodes, 1, self.num_heads, self.embedding_dim) \
-                    - pos_dst.view(1, batch_size, self.num_heads, self.embedding_dim),
+                    pos.view(self.num_nodes, 1, self.num_heads,
+                             self.embedding_dim)
+                    - pos_dst.view(1, batch_size, self.num_heads,
+                                   self.embedding_dim),
                     dim=3,
                 )
             elif self.distance == 'dot':
-                pos_norm = pos / torch.norm(pos, dim=2, keepdim=True) # num_nodes, num_heads, embed_dim
+                # num_nodes, num_heads, embed_dim
+                pos_norm = pos / torch.norm(pos, dim=2, keepdim=True)
 
                 distance_shape = (self.num_nodes, batch_size, self.num_heads)
-                pos_src_norm = pos_src / torch.norm(pos_src, dim=2, keepdim=True) # batch_size, num_heads, embedding_dim
+                # batch_size, num_heads, embedding_dim
+                pos_src_norm = pos_src / \
+                    torch.norm(pos_src, dim=2, keepdim=True)
                 src_norm = -torch.sum(
-                    pos_src_norm.view(1, batch_size, self.num_heads, self.embedding_dim) * \
-                    pos_norm.view(self.num_nodes, 1, self.num_heads, self.embedding_dim),
+                    pos_src_norm.view(1, batch_size, self.num_heads, self.embedding_dim) *
+                    pos_norm.view(self.num_nodes, 1,
+                                  self.num_heads, self.embedding_dim),
                     dim=3
                 ).view(distance_shape)
 
-                pos_dst_norm = pos_dst / torch.norm(pos_dst, dim=2, keepdim=True) # batch_size, num_heads, embedding_dim
+                # batch_size, num_heads, embedding_dim
+                pos_dst_norm = pos_dst / \
+                    torch.norm(pos_dst, dim=2, keepdim=True)
                 dst_norm = -torch.sum(
-                    pos_dst_norm.view(1, batch_size, self.num_heads, self.embedding_dim) * \
-                    pos_norm.view(self.num_nodes, 1, self.num_heads, self.embedding_dim),
+                    pos_dst_norm.view(1, batch_size, self.num_heads, self.embedding_dim) *
+                    pos_norm.view(self.num_nodes, 1,
+                                  self.num_heads, self.embedding_dim),
                     dim=3
                 ).view(distance_shape)
 
             # (num_samples, batch_size, num_heads)
-            src0 = torch.topk(src_norm, k=self.num_samples+1, largest=False, sorted=False, dim=0).indices[1:]
-            dst0 = torch.topk(dst_norm, k=self.num_samples+1, largest=False, sorted=False, dim=0).indices[1:]
+            src0 = torch.topk(src_norm, k=self.num_samples+1,
+                              largest=False, sorted=False, dim=0).indices[1:]
+            dst0 = torch.topk(dst_norm, k=self.num_samples+1,
+                              largest=False, sorted=False, dim=0).indices[1:]
             # (batch_size, num_heads, num_samples)
             src0 = src0.permute(1, 2, 0)
             dst0 = dst0.permute(1, 2, 0)
@@ -563,86 +635,116 @@ class MADEdgePredictor(nn.Module):
 
         # pos[src] - pos[src0]
         # (batch_size, num_heads, num_samples, embedding_dim)
-        src_dist = pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim) - pos_src0
-        dst_dist = pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim) - pos_dst0
+        src_dist = pos_src.view(
+            batch_size, self.num_heads, 1, self.embedding_dim) - pos_src0
+        dst_dist = pos_dst.view(
+            batch_size, self.num_heads, 1, self.embedding_dim) - pos_dst0
 
         # grads(src), grads(dst)
         # (batch_size, num_heads, embedding_dim)
-        grads_src = grads[dst.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
-        grads_dst = grads[src.view(batch_size, 1), heads_idx.view(1, self.num_heads)]
+        grads_src = grads[dst.view(batch_size, 1),
+                          heads_idx.view(1, self.num_heads)]
+        grads_dst = grads[src.view(batch_size, 1),
+                          heads_idx.view(1, self.num_heads)]
 
         # Take dot product to eliminate embedding_dim dimension
         # (batch_size, num_heads, num_samples)
         src_contrib = torch.matmul(
-            src_dist.view(batch_size, self.num_heads, self.num_samples, 1, self.embedding_dim),
-            grads_src.view(batch_size, self.num_heads, 1, self.embedding_dim, 1)
+            src_dist.view(batch_size, self.num_heads,
+                          self.num_samples, 1, self.embedding_dim),
+            grads_src.view(batch_size, self.num_heads,
+                           1, self.embedding_dim, 1)
         ).view(batch_size, self.num_heads, self.num_samples)
         dst_contrib = torch.matmul(
-            dst_dist.view(batch_size, self.num_heads, self.num_samples, 1, self.embedding_dim),
-            grads_dst.view(batch_size, self.num_heads, 1, self.embedding_dim, 1)
+            dst_dist.view(batch_size, self.num_heads,
+                          self.num_samples, 1, self.embedding_dim),
+            grads_dst.view(batch_size, self.num_heads,
+                           1, self.embedding_dim, 1)
         ).view(batch_size, self.num_heads, self.num_samples)
 
         # (batch_size, num_heads, num_samples)
-        src_logits = self.label_nn.weight * self.adj[src0, dst.view(batch_size, 1, 1)] + src_contrib
-        dst_logits = self.label_nn.weight * self.adj[src.view(batch_size, 1, 1), dst0] + dst_contrib
+        src_logits = self.label_nn.weight * \
+            self.adj[src0, dst.view(batch_size, 1, 1)] + src_contrib
+        dst_logits = self.label_nn.weight * \
+            self.adj[src.view(batch_size, 1, 1), dst0] + dst_contrib
 
         # (batch_size, num_heads, num_samples * 2)
         logits = torch.cat([src_logits, dst_logits], dim=2)
 
-        # Weigh according to softmin distance, sentinals thing
-        # Sum across num_samples should be 1.
+        if self.sample_weights == 'softmin':
+            # Weigh according to softmin distance, sentinals thing
+            # Sum across num_samples should be 1.
+            if self.distance == 'euclidian':
+                # (batch_size, num_heads, 2 * num_samples)
+                distance = torch.norm(
+                    torch.cat([src_dist, dst_dist], dim=2), dim=3)
+            elif self.distance == 'inner':
+                pos_src_ = pos_src.view(
+                    batch_size, self.num_heads, 1, self.embedding_dim)
+                pos_src0_proj = self.W(pos_src0)
+                inner_src = torch.sum(
+                    pos_src_*pos_src0_proj,
+                    dim=3
+                )/(torch.norm(pos_src_, dim=3)*(torch.norm(pos_src0_proj, dim=3)))
 
-        if self.distance=='euclidian':
-            # (batch_size, num_heads, 2 * num_samples)
-            distance = torch.norm(torch.cat([src_dist, dst_dist], dim=2), dim=3)
-        elif self.distance=='inner':
-            pos_src_ = pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim)
-            pos_src0_proj = self.W(pos_src0)
-            inner_src = torch.sum(
-                pos_src_*pos_src0_proj,
-                dim=3
-            )/(torch.norm(pos_src_, dim = 3)*(torch.norm(pos_src0_proj, dim=3)))
+                pos_dst_ = pos_dst.view(
+                    batch_size, self.num_heads, 1, self.embedding_dim)
+                pos_dst0_proj = self.W(pos_dst0)
+                inner_dst = torch.sum(
+                    pos_dst_*pos_dst0_proj,
+                    dim=3
+                )/(torch.norm(pos_dst_, dim=3)*(torch.norm(pos_dst0_proj, dim=3)))
+                distance = torch.cat([inner_src, inner_dst], dim=2)
+            elif self.distance == 'dot':
+                # Negative dot product, so that smaller is closer.
+                distance_shape = (batch_size, self.num_heads, self.num_samples)
+                # (batch_size, num_heads, embed_size)
+                pos_src_norm = pos_src / \
+                    torch.norm(pos_src, dim=2, keepdim=True)
+                # (batch_size, num_heads, num_samples, embed_size)
+                pos_src0_norm = pos_src0 / \
+                    torch.norm(pos_src0, dim=2, keepdim=True)
+                inner_src = -torch.sum(
+                    pos_src_norm.view(batch_size, self.num_heads, 1, self.embedding_dim) *
+                    pos_src0_norm.view(
+                        batch_size, self.num_heads, self.num_samples, self.embedding_dim),
+                    dim=3
+                ).view(distance_shape)
 
-            pos_dst_ = pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim)
-            pos_dst0_proj = self.W(pos_dst0)
-            inner_dst = torch.sum(
-                pos_dst_*pos_dst0_proj,
-                dim=3
-            )/(torch.norm(pos_dst_, dim = 3)*(torch.norm(pos_dst0_proj, dim=3)))
-            distance = torch.cat([inner_src, inner_dst], dim=2)
-        elif self.distance == 'dot':
-            # Negative dot product, so that smaller is closer.
-            distance_shape = (batch_size, self.num_heads, self.num_samples)
-            pos_src_norm = pos_src / torch.norm(pos_src, dim=2, keepdim=True) # (batch_size, num_heads, embed_size)
-            pos_src0_norm = pos_src0 / torch.norm(pos_src0, dim=2, keepdim=True) # (batch_size, num_heads, num_samples, embed_size)
-            inner_src = -torch.sum(
-                pos_src_norm.view(batch_size, self.num_heads, 1, self.embedding_dim) * \
-                pos_src0_norm.view(batch_size, self.num_heads, self.num_samples, self.embedding_dim),
-                dim=3
-            ).view(distance_shape)
+                pos_dst_norm = pos_dst / \
+                    torch.norm(pos_dst, dim=2, keepdim=True)
+                pos_dst0_norm = pos_dst0 / \
+                    torch.norm(pos_dst0, dim=2, keepdim=True)
+                inner_dst = -torch.sum(
+                    pos_dst_norm.view(batch_size, self.num_heads, 1, self.embedding_dim) *
+                    pos_dst0_norm.view(
+                        batch_size, self.num_heads, self.num_samples, self.embedding_dim),
+                    dim=3
+                ).view(distance_shape)
 
-            pos_dst_norm = pos_dst / torch.norm(pos_dst, dim=2, keepdim=True)
-            pos_dst0_norm = pos_dst0 / torch.norm(pos_dst0, dim=2, keepdim=True)
-            inner_dst = -torch.sum(
-                pos_dst_norm.view(batch_size, self.num_heads, 1, self.embedding_dim) * \
-                pos_dst0_norm.view(batch_size, self.num_heads, self.num_samples, self.embedding_dim),
-                dim=3
-            ).view(distance_shape)
+                # (batch_size, num_heads, 2 * num_samples)
+                distance = torch.cat([inner_src, inner_dst], dim=2)
 
-            # (batch_size, num_heads, 2 * num_samples)
-            distance = torch.cat([inner_src, inner_dst], dim=2)
+            # (batch_size, num_heads, 2 * num_samples + num_sentinals)
+            if self.num_sentinals == 0:
+                norm_sentinals = distance
+            else:
+                norm_sentinals = torch.cat([distance, torch.full(
+                    (batch_size, self.num_heads, self.num_sentinals), self.sentinal_dist, device=device)], dim=2)
 
+            # Get softmax weights, strip out sentinals
+            # (batch_size, num_heads, num_samples * 2)
+            # logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :self.num_samples*2]
+            logit_weight = F.softmin(norm_sentinals, dim=2)[
+                :, :, :self.num_samples*2]
 
-        # (batch_size, num_heads, 2 * num_samples + num_sentinals)
-        if self.num_sentinals == 0:
-            norm_sentinals = distance
-        else:
-            norm_sentinals = torch.cat([distance, torch.full((batch_size, self.num_heads, self.num_sentinals), self.sentinal_dist, device=device)], dim=2)
-
-        # Get softmax weights, strip out sentinals
-        # (batch_size, num_heads, num_samples * 2)
-        # logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :self.num_samples*2]
-        logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :self.num_samples*2]
+        # Compute logit weight based on bespoke attention mechanism
+        elif self.sample_weights == 'attention':
+            # (batch_size, num_heads, num_samples)
+            src_weight = self.atn(pos_src, pos_src0)
+            dst_weight = self.atn(pos_dst, pos_dst0)
+            # (batch_size, num_heads, 2*num_samples)
+            logit_weight = torch.cat([src_weight, dst_weight], dim=2)
 
         # Weigh logits according to weights and take mean
         # (batch_size, num_heads)
@@ -650,7 +752,6 @@ class MADEdgePredictor(nn.Module):
 
         output_logits = torch.mean(weighed_logits, dim=1)
         return torch.sigmoid(output_logits)
-
 
 
 class FieldPredictor(torch.nn.Module):
@@ -673,13 +774,16 @@ class FieldPredictor(torch.nn.Module):
         self.dropout = dropout
 
         self.lins = torch.nn.ModuleList()
-        self.lins.append(torch.nn.Linear(n_heads*embedding_dim, n_heads*embedding_dim))
+        self.lins.append(torch.nn.Linear(
+            n_heads*embedding_dim, n_heads*embedding_dim))
         for _ in range(num_layers - 2):
-            self.lins.append(torch.nn.Linear(n_heads*embedding_dim, n_heads*embedding_dim))
-        self.lins.append(torch.nn.Linear(n_heads*embedding_dim, n_heads*embedding_dim))
+            self.lins.append(torch.nn.Linear(
+                n_heads*embedding_dim, n_heads*embedding_dim))
+        self.lins.append(torch.nn.Linear(
+            n_heads*embedding_dim, n_heads*embedding_dim))
 
         bns_layers = [nn.BatchNorm1d(num_features=embedding_dim)
-                        for _ in range(num_layers)]
+                      for _ in range(num_layers)]
         self.bns = nn.ModuleList(bns_layers)
         self.dropout = dropout
 
