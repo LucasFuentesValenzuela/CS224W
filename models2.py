@@ -424,6 +424,9 @@ class MAD_Model(nn.Module):
             num_samples=16,
             sentinal_dist=1,
             distance="euclidian",
+            sample_weights='attention',
+            num_weight_layers=3,
+            hidden_weight_dim=32
         )
 
         nn.init.xavier_uniform_(self.pos_embs)
