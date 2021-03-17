@@ -582,24 +582,25 @@ class MADEdgePredictor(nn.Module):
             # (batch_size, num_heads, 1, embedding_dim)
             pos_src_ = pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim)
             pos_dst_ = pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim)
-            inner_src = []
-            inner_dst = []
+            inner_src = torch.zeros(batch_size, self.num_heads, self.num_samples)
+            inner_dst = torch.zeros(batch_size, self.num_heads, self.num_samples)
             for k in range(len(self.W)):
+                x1 = pos_src_[:, k, :, :]
+                x2 = self.W[k](pos_src0[:, k, :, :])
                 inner_src_ = torch.sum(
-                    pos_src_[:, k, :, :]*self.W[k](pos_src0[:, k, :, :]),
+                    x1*x2,
                     dim=2
-                )/(torch.norm(pos_src_[:, k, :, :], dim = 2)*torch.norm(self.W[k](pos_src0[:, k, :, :]), dim = 2))
-                inner_src.append(inner_src_.unsqueeze(1))
+                )/(torch.norm(x1, dim = 2)*torch.norm(x2, dim = 2))
+                inner_src[:, k, :] = inner_src_
 
+                x1 = pos_dst_[:, k, :, :]
+                x2 = self.W[k](pos_dst0[:, k, :, :])
                 inner_dst_ = torch.sum(
-                    pos_dst_[:, k, :, :]*self.W[k](pos_dst0[:, k, :, :]),
+                    x1*x2,
                     dim=2
-                )/(torch.norm(pos_dst_[:, k, :, :], dim = 2)*torch.norm(
-                    self.W[k](pos_dst0[:, k, :, :]), dim=2))
-                inner_dst.append(inner_dst_.unsqueeze(1))
+                )/(torch.norm(x1, dim = 2)*torch.norm(x2, dim=2))
+                inner_dst[:, k, :] = inner_dst_
 
-            inner_src=torch.cat(inner_src, dim=1)
-            inner_dst=torch.cat(inner_dst, dim=1)
             distance = torch.cat([inner_src, inner_dst], dim=2)
 
         # (batch_size, num_heads, 2 * num_samples + num_sentinals)
