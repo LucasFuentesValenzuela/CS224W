@@ -473,8 +473,7 @@ class MADAttention(torch.nn.Module):
         # x [pos_src, pos_dst]: (batch_size, num_heads, embedding_dim)
         # x0 [pos_src0, pos_dst0]: (batch_size, num_heads, num_samples, embedding_dim)
         '''
-        x1_exp = torch.cat([x1.unsqueeze(2)
-                            for _ in range(x0.shape[2])], dim=2)
+        x1_exp = x1.unsqueeze(2).repeat((1, 1, x0.shape[2], 1))
         x = torch.cat([x1_exp, x0], dim=3)
         for lin in self.lins[:-1]:
             x = lin(x)
