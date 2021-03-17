@@ -419,10 +419,10 @@ class MAD_Model(nn.Module):
             adj_t=adj_t,
             num_heads=num_heads,
             embedding_dim=embedding_dim,
-            num_sentinals=0,
-            num_samples=8,
-            sentinal_dist=0.5,
-            distance="inner",
+            num_sentinals=8,
+            num_samples=16,
+            sentinal_dist=1,
+            distance="euclidian",
         )
 
         nn.init.xavier_uniform_(self.pos_embs)
@@ -456,7 +456,7 @@ class MADEdgePredictor(nn.Module):
         num_sentinals: int,
         num_samples: int,
         sentinal_dist: float = 1.,
-        distance: str = 'inner',
+        distance: str = 'euclidian',
     ):
         '''
         distance: how to compute the weighting of different samples
@@ -477,13 +477,11 @@ class MADEdgePredictor(nn.Module):
         # nn.init.xavier_normal(self.label_nn.weight)
         self.label_nn.weight = nn.Parameter(torch.ones_like(self.label_nn.weight))
 
-        assert self.distance in ['euclidian', 'inner'], 'Distance metric invalid'
+        assert self.distance in ['euclidian', 'inner', 'dot'], 'Distance metric invalid'
 
         # weighted inner product xTWx
         if self.distance=='inner':
-            self.W = nn.ModuleList([nn.Linear(
-                self.embedding_dim, self.embedding_dim) for _ in range(self.num_heads)
-            ])
+            self.W = nn.Linear(self.embedding_dim, self.embedding_dim)
 
 
     def forward(self, pos: torch.Tensor, grads: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
@@ -522,17 +520,36 @@ class MADEdgePredictor(nn.Module):
             dst0 = torch.randint(0, self.num_nodes, size=(batch_size, self.num_heads, self.num_samples), device=device)
         else:
             # Grab TopK closest src0 and dst0 nodes to src and dst
-            # (num_nodes, batch_size, num_heads)
-            src_norm = torch.norm(
-                pos.view(self.num_nodes, 1, self.num_heads, self.embedding_dim) \
-                - pos_src.view(1, batch_size, self.num_heads, self.embedding_dim),
-                dim=3,
-            )
-            dst_norm = torch.norm(
-                pos.view(self.num_nodes, 1, self.num_heads, self.embedding_dim) \
-                - pos_dst.view(1, batch_size, self.num_heads, self.embedding_dim),
-                dim=3,
-            )
+            if self.distance == 'euclidian' or self.distance == 'inner':
+                # (num_nodes, batch_size, num_heads)
+                src_norm = torch.norm(
+                    pos.view(self.num_nodes, 1, self.num_heads, self.embedding_dim) \
+                    - pos_src.view(1, batch_size, self.num_heads, self.embedding_dim),
+                    dim=3,
+                )
+                dst_norm = torch.norm(
+                    pos.view(self.num_nodes, 1, self.num_heads, self.embedding_dim) \
+                    - pos_dst.view(1, batch_size, self.num_heads, self.embedding_dim),
+                    dim=3,
+                )
+            elif self.distance == 'dot':
+                pos_norm = pos / torch.norm(pos, dim=2, keepdim=True) # num_nodes, num_heads, embed_dim
+
+                distance_shape = (self.num_nodes, batch_size, self.num_heads)
+                pos_src_norm = pos_src / torch.norm(pos_src, dim=2, keepdim=True) # batch_size, num_heads, embedding_dim
+                src_norm = -torch.sum(
+                    pos_src_norm.view(1, batch_size, self.num_heads, self.embedding_dim) * \
+                    pos_norm.view(self.num_nodes, 1, self.num_heads, self.embedding_dim),
+                    dim=3
+                ).view(distance_shape)
+
+                pos_dst_norm = pos_dst / torch.norm(pos_dst, dim=2, keepdim=True) # batch_size, num_heads, embedding_dim
+                dst_norm = -torch.sum(
+                    pos_dst_norm.view(1, batch_size, self.num_heads, self.embedding_dim) * \
+                    pos_norm.view(self.num_nodes, 1, self.num_heads, self.embedding_dim),
+                    dim=3
+                ).view(distance_shape)
+
             # (num_samples, batch_size, num_heads)
             src0 = torch.topk(src_norm, k=self.num_samples+1, largest=False, sorted=False, dim=0).indices[1:]
             dst0 = torch.topk(dst_norm, k=self.num_samples+1, largest=False, sorted=False, dim=0).indices[1:]
@@ -579,29 +596,42 @@ class MADEdgePredictor(nn.Module):
             # (batch_size, num_heads, 2 * num_samples)
             distance = torch.norm(torch.cat([src_dist, dst_dist], dim=2), dim=3)
         elif self.distance=='inner':
-            # (batch_size, num_heads, 1, embedding_dim)
             pos_src_ = pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim)
+            pos_src0_proj = self.W(pos_src0)
+            inner_src = torch.sum(
+                pos_src_*pos_src0_proj,
+                dim=3
+            )/(torch.norm(pos_src_, dim = 3)*(torch.norm(pos_src0_proj, dim=3)))
+
             pos_dst_ = pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim)
-            inner_src = torch.zeros(batch_size, self.num_heads, self.num_samples, device=device)
-            inner_dst = torch.zeros(batch_size, self.num_heads, self.num_samples, device=device)
-            for k in range(len(self.W)):
-                x1 = pos_src_[:, k, :, :]
-                x2 = self.W[k](pos_src0[:, k, :, :])
-                inner_src_ = torch.sum(
-                    x1*x2,
-                    dim=2
-                )/(torch.norm(x1, dim = 2)*torch.norm(x2, dim = 2))
-                inner_src[:, k, :] = inner_src_
-
-                x1 = pos_dst_[:, k, :, :]
-                x2 = self.W[k](pos_dst0[:, k, :, :])
-                inner_dst_ = torch.sum(
-                    x1*x2,
-                    dim=2
-                )/(torch.norm(x1, dim = 2)*torch.norm(x2, dim=2))
-                inner_dst[:, k, :] = inner_dst_
-
+            pos_dst0_proj = self.W(pos_dst0)
+            inner_dst = torch.sum(
+                pos_dst_*pos_dst0_proj,
+                dim=3
+            )/(torch.norm(pos_dst_, dim = 3)*(torch.norm(pos_dst0_proj, dim=3)))
             distance = torch.cat([inner_src, inner_dst], dim=2)
+        elif self.distance == 'dot':
+            # Negative dot product, so that smaller is closer.
+            distance_shape = (batch_size, self.num_heads, self.num_samples)
+            pos_src_norm = pos_src / torch.norm(pos_src, dim=2, keepdim=True) # (batch_size, num_heads, embed_size)
+            pos_src0_norm = pos_src0 / torch.norm(pos_src0, dim=2, keepdim=True) # (batch_size, num_heads, num_samples, embed_size)
+            inner_src = -torch.sum(
+                pos_src_norm.view(batch_size, self.num_heads, 1, self.embedding_dim) * \
+                pos_src0_norm.view(batch_size, self.num_heads, self.num_samples, self.embedding_dim),
+                dim=3
+            ).view(distance_shape)
+
+            pos_dst_norm = pos_dst / torch.norm(pos_dst, dim=2, keepdim=True)
+            pos_dst0_norm = pos_dst0 / torch.norm(pos_dst0, dim=2, keepdim=True)
+            inner_dst = -torch.sum(
+                pos_dst_norm.view(batch_size, self.num_heads, 1, self.embedding_dim) * \
+                pos_dst0_norm.view(batch_size, self.num_heads, self.num_samples, self.embedding_dim),
+                dim=3
+            ).view(distance_shape)
+
+            # (batch_size, num_heads, 2 * num_samples)
+            distance = torch.cat([inner_src, inner_dst], dim=2)
+
 
         # (batch_size, num_heads, 2 * num_samples + num_sentinals)
         if self.num_sentinals == 0:
