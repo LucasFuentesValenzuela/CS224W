@@ -425,7 +425,7 @@ class MAD_Model(nn.Module):
             sentinal_dist=1,
             distance="euclidian",
             sample_weights='attention',
-            num_weight_layers=3,
+            num_weight_layers=1,
             hidden_weight_dim=32
         )
 
@@ -481,10 +481,9 @@ class MADAttention(torch.nn.Module):
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.lins[-1](x)
         x = x.squeeze(3)
-        x = x/torch.sum(x, dim=2).unsqueeze(2)
-        # return torch.sigmoid(x).flatten()
 
-        return x
+        out = torch.nn.Softmax(dim=2)(x)
+        return out
 
 
 class MADEdgePredictor(nn.Module):
