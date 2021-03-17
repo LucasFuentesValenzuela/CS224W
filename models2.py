@@ -478,8 +478,9 @@ class MADEdgePredictor(nn.Module):
 
         # weighted inner product xTWx
         if self.distance=='inner':
-            self.W = nn.Linear(
-                self.embedding_dim*self.num_heads, self.embedding_dim*self.num_heads)
+            self.W = nn.ModuleList([nn.Linear(
+                self.embedding_dim, self.embedding_dim) for _ in range(self.num_heads)
+            ])
 
 
     def forward(self, pos: torch.Tensor, grads: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
@@ -577,21 +578,25 @@ class MADEdgePredictor(nn.Module):
         elif self.distance=='inner':
             # (batch_size, num_heads, 1, embedding_dim)
             pos_src_ = pos_src.view(batch_size, self.num_heads, 1, self.embedding_dim)
-            pos_src0_ = pos_src0.view(batch_size, self.num_sentinals, self.num_heads*self.embedding_dim)
-            inner_src = torch.sum(
-                pos_src_*self.W(pos_src0_).view(batch_size, self.num_heads, self.num_sentinals, self.embedding_dim),
-                dim=3
-            )/(torch.norm(pos_src_, dim = 3)*(torch.norm(
-                self.W(pos_src0_).view(batch_size, self.num_heads, self.num_sentinals, self.embedding_dim), dim=3)))
-
             pos_dst_ = pos_dst.view(batch_size, self.num_heads, 1, self.embedding_dim)
-            pos_dst0_ = pos_dst0.view(batch_size, self.num_sentinals, self.num_heads*self.embedding_dim)
-            inner_dst = torch.sum(
-                pos_dst_*self.W(pos_dst0_).view(batch_size, self.num_heads, self.num_sentinals, self.embedding_dim),
-                dim=3
-            )/(torch.norm(pos_dst_, dim = 3)*(torch.norm(
-                self.W(pos_dst0_).view(batch_size, self.num_heads, self.num_sentinals, self.embedding_dim), dim=3)))
+            inner_src = []
+            inner_dst = []
+            for k in range(len(self.W)):
+                inner_src_ = torch.sum(
+                    pos_src_[:, k, :, :]*self.W[k](pos_src0[:, k, :, :]),
+                    dim=2
+                )/(torch.norm(pos_src_[:, k, :, :], dim = 2)*torch.norm(self.W[k](pos_src0[:, k, :, :]), dim = 2))
+                inner_src.append(inner_src_.unsqueeze(1))
 
+                inner_dst_ = torch.sum(
+                    pos_dst_[:, k, :, :]*self.W[k](pos_dst0[:, k, :, :]),
+                    dim=2
+                )/(torch.norm(pos_dst_[:, k, :, :], dim = 2)*torch.norm(
+                    self.W[k](pos_dst0[:, k, :, :]), dim=2))
+                inner_dst.append(inner_dst_.unsqueeze(1))
+
+            inner_src=torch.cat(inner_src, dim=1)
+            inner_dst=torch.cat(inner_dst, dim=1)
             distance = torch.cat([inner_src, inner_dst], dim=2)
 
         # (batch_size, num_heads, 2 * num_samples + num_sentinals)
