@@ -405,8 +405,8 @@ class MAD_Model(nn.Module):
         self,
         num_nodes: int,
         adj_t: torch_sparse.SparseTensor,
-        num_heads: int = 12,
-        embedding_dim: int = 12,
+        num_heads: int = 2,
+        embedding_dim: int = 4,
     ):
         super(MAD_Model, self).__init__()
         self.pos_embs = nn.Parameter(
@@ -421,7 +421,7 @@ class MAD_Model(nn.Module):
             num_heads=num_heads,
             embedding_dim=embedding_dim,
             num_sentinals=8,
-            num_samples=8,
+            num_samples=3,
             sentinal_dist=1,
             distance="euclidian",
             sample_weights='attention',
@@ -579,46 +579,53 @@ class MADEdgePredictor(nn.Module):
                 batch_size, self.num_heads, self.num_samples), device=device)
         else:
             # Grab TopK closest src0 and dst0 nodes to src and dst
-            if self.distance == 'euclidian' or self.distance == 'inner':
-                # (num_nodes, batch_size, num_heads)
-                src_norm = torch.norm(
-                    pos.view(self.num_nodes, 1, self.num_heads,
-                             self.embedding_dim)
-                    - pos_src.view(1, batch_size, self.num_heads,
-                                   self.embedding_dim),
-                    dim=3,
-                )
-                dst_norm = torch.norm(
-                    pos.view(self.num_nodes, 1, self.num_heads,
-                             self.embedding_dim)
-                    - pos_dst.view(1, batch_size, self.num_heads,
-                                   self.embedding_dim),
-                    dim=3,
-                )
-            elif self.distance == 'dot':
-                # num_nodes, num_heads, embed_dim
-                pos_norm = pos / torch.norm(pos, dim=2, keepdim=True)
+            if self.sample_weights=='softmin':
+                if self.distance == 'euclidian' or self.distance == 'inner':
+                    # (num_nodes, batch_size, num_heads)
+                    src_norm = torch.norm(
+                        pos.view(self.num_nodes, 1, self.num_heads,
+                                self.embedding_dim)
+                        - pos_src.view(1, batch_size, self.num_heads,
+                                    self.embedding_dim),
+                        dim=3,
+                    )
+                    dst_norm = torch.norm(
+                        pos.view(self.num_nodes, 1, self.num_heads,
+                                self.embedding_dim)
+                        - pos_dst.view(1, batch_size, self.num_heads,
+                                    self.embedding_dim),
+                        dim=3,
+                    )
+                elif self.distance == 'dot':
+                    # num_nodes, num_heads, embed_dim
+                    pos_norm = pos / torch.norm(pos, dim=2, keepdim=True)
 
-                distance_shape = (self.num_nodes, batch_size, self.num_heads)
-                # batch_size, num_heads, embedding_dim
-                pos_src_norm = pos_src / \
-                    torch.norm(pos_src, dim=2, keepdim=True)
-                src_norm = -torch.sum(
-                    pos_src_norm.view(1, batch_size, self.num_heads, self.embedding_dim) *
-                    pos_norm.view(self.num_nodes, 1,
-                                  self.num_heads, self.embedding_dim),
-                    dim=3
-                ).view(distance_shape)
+                    distance_shape = (self.num_nodes, batch_size, self.num_heads)
+                    # batch_size, num_heads, embedding_dim
+                    pos_src_norm = pos_src / \
+                        torch.norm(pos_src, dim=2, keepdim=True)
+                    src_norm = -torch.sum(
+                        pos_src_norm.view(1, batch_size, self.num_heads, self.embedding_dim) *
+                        pos_norm.view(self.num_nodes, 1,
+                                    self.num_heads, self.embedding_dim),
+                        dim=3
+                    ).view(distance_shape)
 
-                # batch_size, num_heads, embedding_dim
-                pos_dst_norm = pos_dst / \
-                    torch.norm(pos_dst, dim=2, keepdim=True)
-                dst_norm = -torch.sum(
-                    pos_dst_norm.view(1, batch_size, self.num_heads, self.embedding_dim) *
-                    pos_norm.view(self.num_nodes, 1,
-                                  self.num_heads, self.embedding_dim),
-                    dim=3
-                ).view(distance_shape)
+                    # batch_size, num_heads, embedding_dim
+                    pos_dst_norm = pos_dst / \
+                        torch.norm(pos_dst, dim=2, keepdim=True)
+                    dst_norm = -torch.sum(
+                        pos_dst_norm.view(1, batch_size, self.num_heads, self.embedding_dim) *
+                        pos_norm.view(self.num_nodes, 1,
+                                    self.num_heads, self.embedding_dim),
+                        dim=3
+                    ).view(distance_shape)
+
+            elif self.sample_weights=='attention':
+                pos_ = pos.permute(1, 0, 2).unsqueeze(0).repeat((pos_src.shape[0], 1, 1, 1))
+                # (batch_size, num_heads, num_nodes)
+                src_norm = self.atn(pos_src, pos_).permute(1, 2, 0)
+                dst_norm = self.atn(pos_dst, pos_).permute(1, 2, 0)
 
             # (num_samples, batch_size, num_heads)
             src0 = torch.topk(src_norm, k=self.num_samples+1,
