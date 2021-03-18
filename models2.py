@@ -405,8 +405,8 @@ class MAD_Model(nn.Module):
         self,
         num_nodes: int,
         adj_t: torch_sparse.SparseTensor,
-        num_heads: int = 2,
-        embedding_dim: int = 4,
+        num_heads: int = 12,
+        embedding_dim: int = 12,
     ):
         super(MAD_Model, self).__init__()
         self.pos_embs = nn.Parameter(
@@ -421,7 +421,7 @@ class MAD_Model(nn.Module):
             num_heads=num_heads,
             embedding_dim=embedding_dim,
             num_sentinals=8,
-            num_samples=3,
+            num_samples=8,
             sentinal_dist=1,
             distance="euclidian",
             sample_weights='attention',
