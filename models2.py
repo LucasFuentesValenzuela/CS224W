@@ -804,9 +804,9 @@ class MADEdgePredictor(nn.Module):
 
                 # renormalizing
                 src_weight = src_weight/torch.maximum(
-                    torch.sum(src_weight, dim=2, keepdim=True), 1)
+                    torch.sum(src_weight, dim=2, keepdim=True), self.thresh_weight)
                 dst_weight = dst_weight/torch.maximum(
-                    torch.sum(dst_weight, dim=2, keepdim=True), 1)
+                    torch.sum(dst_weight, dim=2, keepdim=True), self.thresh_weight)
 
             # (batch_size, num_heads, 2*num_samples)
             logit_weight = torch.cat([src_weight, dst_weight], dim=2)
