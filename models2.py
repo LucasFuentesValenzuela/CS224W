@@ -426,7 +426,7 @@ class MAD_Model(nn.Module):
             embedding_dim=embedding_dim,
             num_sentinals=8,
             num_samples=8,
-            k_nearest=8,
+            k_nearest=64,
             sentinal_dist=1,
             distance="euclidian",
             sample_weights='attention',
@@ -496,7 +496,7 @@ class MADAttention(torch.nn.Module):
         if return_softmin:
             out = F.softmin(x, dim=2)
         else:
-            out = torch.exp(-x) #do not normalize the softmins
+            out = torch.sigmoid(x) #do not normalize the softmins
         return out
 
 
@@ -645,35 +645,26 @@ class MADEdgePredictor(nn.Module):
                 # x [pos_src, pos_dst]: (batch_size, num_heads, embedding_dim)
                 # x0 [pos_src0, pos_dst0]: (batch_size, num_heads, num_samples, embedding_dim)
 
-                # pos_src shape: (batch_size, num_heads, embedding_dim)
+                pos_ = pos.permute(1, 0, 2).unsqueeze(0).repeat((pos_src.shape[0], 1, 1, 1))
+                # # (batch_size, num_heads, num_nodes)
+                # src_norm = -self.atn(pos_src, pos_).permute(2, 0, 1)
+                # dst_norm = -self.atn(pos_dst, pos_).permute(2, 0, 1)
 
-                src0 = torch.randint(0, self.num_nodes,
-                size=(batch_size, self.num_heads, self.k_nearest*16),
-                device=device)
-                dst0 = torch.randint(0, self.num_nodes,
-                size=(batch_size, self.num_heads, self.k_nearest*16),
-                device=device)
-                # (batch_size, num_heads, k_nearest**2, embedding_dim)
-                pos_src0 = pos[src0, heads_idx.view(1, self.num_heads, 1)]
-                pos_dst0 = pos[dst0, heads_idx.view(1, self.num_heads, 1)]
+                # choose random nodes for performance
+                src0 = torch.randint(0, self.num_nodes, size=(
+                    batch_size, self.num_heads, self.k_nearest), device=device)
+                dst0 = torch.randint(0, self.num_nodes, size=(
+                    batch_size, self.num_heads, self.k_nearest), device=device)
 
-                # (k_nearest**2, batch_size, num_heads)
-                src_norm = -self.atn(pos_src, pos_src0).permute(2, 0, 1)
-                dst_norm = -self.atn(pos_dst, pos_dst0).permute(2, 0, 1)
-                # src0 = torch.randint(0, self.num_nodes, size=(
-                #     batch_size, self.num_heads, self.k_nearest), device=device)
-                # dst0 = torch.randint(0, self.num_nodes, size=(
-                #     batch_size, self.num_heads, self.k_nearest), device=device)
-
-            # if self.sample_weights != 'attention':
-            # (k_nearest, batch_size, num_heads)
-            src0 = torch.topk(src_norm, k=self.k_nearest+1,
-                                largest=False, sorted=False, dim=0).indices[1:]
-            dst0 = torch.topk(dst_norm, k=self.k_nearest+1,
-                                largest=False, sorted=False, dim=0).indices[1:]
-            # (batch_size, num_heads, k_nearest)
-            src0 = src0.permute(1, 2, 0)
-            dst0 = dst0.permute(1, 2, 0)
+            if self.sample_weights != 'attention':
+                # (k_nearest, batch_size, num_heads)
+                src0 = torch.topk(src_norm, k=self.k_nearest+1,
+                                    largest=False, sorted=False, dim=0).indices[1:]
+                dst0 = torch.topk(dst_norm, k=self.k_nearest+1,
+                                    largest=False, sorted=False, dim=0).indices[1:]
+                # (batch_size, num_heads, k_nearest)
+                src0 = src0.permute(1, 2, 0)
+                dst0 = dst0.permute(1, 2, 0)
 
 
         # (batch_size, num_heads, num_samples, embedding_dim)
@@ -788,28 +779,15 @@ class MADEdgePredictor(nn.Module):
 
         # Compute logit weight based on bespoke attention mechanism
         elif self.sample_weights == 'attention':
-            if self.training:
-                # (batch_size, num_heads, num_samples)
-                src_weight = self.atn(pos_src, pos_src0, return_softmin=True)
-                dst_weight = self.atn(pos_dst, pos_dst0, return_softmin=True)
+            # (batch_size, num_heads, num_samples)
+            src_weight = self.atn(pos_src, pos_src0, return_softmin=False)
+            dst_weight = self.atn(pos_dst, pos_dst0, return_softmin=False)
 
-            else:
-                # (batch_size, num_heads, num_samples)
-                src_weight = self.atn(pos_src, pos_src0, return_softmin=False)
-                dst_weight = self.atn(pos_dst, pos_dst0, return_softmin=False)
-
-                # replacing the "bad choices" by a standard weight of thresh_weight
-                src_weight[src_weight < self.thresh_weight] = 0
-                dst_weight[dst_weight < self.thresh_weight] = 0
-
-                # renormalizing
-                src_weight = src_weight/torch.maximum(
-                    torch.sum(src_weight, dim=2, keepdim=True), self.thresh_weight)
-                dst_weight = dst_weight/torch.maximum(
-                    torch.sum(dst_weight, dim=2, keepdim=True), self.thresh_weight)
+            total_weight = torch.sum(src_weight, dim=2) + torch.sum(dst_weight, dim=2)
+            total_weight = total_weight + self.num_sentinals * torch.sigmoid(self.sentinal_dist)
 
             # (batch_size, num_heads, 2*num_samples)
-            logit_weight = torch.cat([src_weight, dst_weight], dim=2)
+            logit_weight = torch.cat([src_weight, dst_weight], dim=2) / total_weight
 
         # Weigh logits according to weights and take mean
         # (batch_size, num_heads)
