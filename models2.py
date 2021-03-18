@@ -426,16 +426,15 @@ class MAD_Model(nn.Module):
             embedding_dim=embedding_dim,
             num_sentinals=8,
             num_samples=8,
+            k_nearest=64,
             sentinal_dist=1,
             distance="euclidian",
             sample_weights='attention',
-            num_weight_layers=1,
-            hidden_weight_dim=32
+            num_weight_layers=2,
+            hidden_weight_dim=48
         )
         nn.init.uniform_(self.pos_embs)
         nn.init.uniform_(self.grad_embs)
-        nn.init.xavier_uniform_(self.pos_embs)
-        nn.init.xavier_uniform_(self.grad_embs)
 
     def forward(
         self,
@@ -502,6 +501,7 @@ class MADEdgePredictor(nn.Module):
         embedding_dim: int,
         num_sentinals: int,
         num_samples: int,
+        k_nearest: int = 8,
         sentinal_dist: float = 1.,
         distance: str = 'euclidian',
         sample_weights: str = 'softmin',
@@ -521,6 +521,7 @@ class MADEdgePredictor(nn.Module):
         self.num_sentinals = num_sentinals
         self.embedding_dim = embedding_dim
         self.num_samples = num_samples
+        self.k_nearest = k_nearest
         self.distance = distance
         self.sentinal_dist = sentinal_dist
         self.sample_weights = sample_weights
@@ -630,23 +631,30 @@ class MADEdgePredictor(nn.Module):
                     ).view(distance_shape)
 
             elif self.sample_weights=='attention':
-                pos_ = pos.permute(1, 0, 2).unsqueeze(0).repeat((pos_src.shape[0], 1, 1, 1))
-                # (batch_size, num_heads, num_nodes)
-                src_norm = self.atn(pos_src, pos_).permute(2, 0, 1)
-                dst_norm = self.atn(pos_dst, pos_).permute(2, 0, 1)
+                # pos_ = pos.permute(1, 0, 2).unsqueeze(0).repeat((pos_src.shape[0], 1, 1, 1))
+                # # (batch_size, num_heads, num_nodes)
+                # src_norm = self.atn(pos_src, pos_).permute(2, 0, 1)
+                # dst_norm = self.atn(pos_dst, pos_).permute(2, 0, 1)
+                src0 = torch.randint(0, self.num_nodes, size=(
+                    batch_size, self.num_heads, self.k_nearest), device=device)
+                dst0 = torch.randint(0, self.num_nodes, size=(
+                    batch_size, self.num_heads, self.k_nearest), device=device)
 
-            # (num_samples, batch_size, num_heads)
-            src0 = torch.topk(src_norm, k=self.num_samples+1,
-                              largest=False, sorted=False, dim=0).indices[1:]
-            dst0 = torch.topk(dst_norm, k=self.num_samples+1,
-                              largest=False, sorted=False, dim=0).indices[1:]
-            # (batch_size, num_heads, num_samples)
-            src0 = src0.permute(1, 2, 0)
-            dst0 = dst0.permute(1, 2, 0)
+            if self.sample_weights != 'attention':
+                # (k_nearest, batch_size, num_heads)
+                src0 = torch.topk(src_norm, k=self.k_nearest+1,
+                                  largest=False, sorted=False, dim=0).indices[1:]
+                dst0 = torch.topk(dst_norm, k=self.k_nearest+1,
+                                  largest=False, sorted=False, dim=0).indices[1:]
+                # (batch_size, num_heads, k_nearest)
+                src0 = src0.permute(1, 2, 0)
+                dst0 = dst0.permute(1, 2, 0)
+
 
         # (batch_size, num_heads, num_samples, embedding_dim)
         pos_src0 = pos[src0, heads_idx.view(1, self.num_heads, 1)]
         pos_dst0 = pos[dst0, heads_idx.view(1, self.num_heads, 1)]
+        num_samples = pos_src0.shape[2]
 
         # pos[src] - pos[src0]
         # (batch_size, num_heads, num_samples, embedding_dim)
@@ -666,16 +674,16 @@ class MADEdgePredictor(nn.Module):
         # (batch_size, num_heads, num_samples)
         src_contrib = torch.matmul(
             src_dist.view(batch_size, self.num_heads,
-                          self.num_samples, 1, self.embedding_dim),
+                          num_samples, 1, self.embedding_dim),
             grads_src.view(batch_size, self.num_heads,
                            1, self.embedding_dim, 1)
-        ).view(batch_size, self.num_heads, self.num_samples)
+        ).view(batch_size, self.num_heads, num_samples)
         dst_contrib = torch.matmul(
             dst_dist.view(batch_size, self.num_heads,
-                          self.num_samples, 1, self.embedding_dim),
+                          num_samples, 1, self.embedding_dim),
             grads_dst.view(batch_size, self.num_heads,
                            1, self.embedding_dim, 1)
-        ).view(batch_size, self.num_heads, self.num_samples)
+        ).view(batch_size, self.num_heads, num_samples)
 
         # (batch_size, num_heads, num_samples)
         src_logits = self.label_nn.weight * \
@@ -712,7 +720,7 @@ class MADEdgePredictor(nn.Module):
                 distance = torch.cat([inner_src, inner_dst], dim=2)
             elif self.distance == 'dot':
                 # Negative dot product, so that smaller is closer.
-                distance_shape = (batch_size, self.num_heads, self.num_samples)
+                distance_shape = (batch_size, self.num_heads, num_samples)
                 # (batch_size, num_heads, embed_size)
                 pos_src_norm = pos_src / \
                     torch.norm(pos_src, dim=2, keepdim=True)
@@ -722,7 +730,7 @@ class MADEdgePredictor(nn.Module):
                 inner_src = -torch.sum(
                     pos_src_norm.view(batch_size, self.num_heads, 1, self.embedding_dim) *
                     pos_src0_norm.view(
-                        batch_size, self.num_heads, self.num_samples, self.embedding_dim),
+                        batch_size, self.num_heads, num_samples, self.embedding_dim),
                     dim=3
                 ).view(distance_shape)
 
@@ -733,7 +741,7 @@ class MADEdgePredictor(nn.Module):
                 inner_dst = -torch.sum(
                     pos_dst_norm.view(batch_size, self.num_heads, 1, self.embedding_dim) *
                     pos_dst0_norm.view(
-                        batch_size, self.num_heads, self.num_samples, self.embedding_dim),
+                        batch_size, self.num_heads, num_samples, self.embedding_dim),
                     dim=3
                 ).view(distance_shape)
 
@@ -751,7 +759,7 @@ class MADEdgePredictor(nn.Module):
             # (batch_size, num_heads, num_samples * 2)
             # logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :self.num_samples*2]
             logit_weight = F.softmin(norm_sentinals, dim=2)[
-                :, :, :self.num_samples*2]
+                :, :, :num_samples*2]
 
         # Compute logit weight based on bespoke attention mechanism
         elif self.sample_weights == 'attention':
