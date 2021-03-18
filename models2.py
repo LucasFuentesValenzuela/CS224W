@@ -280,8 +280,8 @@ class MAD_SAGE2(nn.Module):
         self.num_heads = num_heads
         self.mad_size = mad_size
 
-        self.embedding = nn.Parameter(torch.rand(self.num_nodes, self.num_heads, self.mad_size))
-        # nn.init.xavier_normal_(self.embedding)
+        self.embedding = nn.Parameter(torch.empty((self.num_nodes, self.num_heads, self.mad_size)))
+        nn.init.xavier_normal_(self.embedding)
 
         self.network = SAGE(
             num_nodes=num_nodes,
@@ -426,15 +426,15 @@ class MAD_Model(nn.Module):
             embedding_dim=embedding_dim,
             num_sentinals=8,
             num_samples=8,
-            k_nearest=64,
+            k_nearest=8,
             sentinal_dist=1,
             distance="euclidian",
             sample_weights='attention',
-            num_weight_layers=2,
-            hidden_weight_dim=48
+            num_weight_layers=1,
+            hidden_weight_dim=48,
         )
-        nn.init.uniform_(self.pos_embs)
-        nn.init.uniform_(self.grad_embs)
+        nn.init.xavier_uniform_(self.pos_embs)
+        nn.init.xavier_uniform_(self.grad_embs)
 
     def forward(
         self,
@@ -631,24 +631,24 @@ class MADEdgePredictor(nn.Module):
                     ).view(distance_shape)
 
             elif self.sample_weights=='attention':
-                # pos_ = pos.permute(1, 0, 2).unsqueeze(0).repeat((pos_src.shape[0], 1, 1, 1))
+                pos_ = pos.permute(1, 0, 2).unsqueeze(0).repeat((pos_src.shape[0], 1, 1, 1))
                 # # (batch_size, num_heads, num_nodes)
-                # src_norm = self.atn(pos_src, pos_).permute(2, 0, 1)
-                # dst_norm = self.atn(pos_dst, pos_).permute(2, 0, 1)
-                src0 = torch.randint(0, self.num_nodes, size=(
-                    batch_size, self.num_heads, self.k_nearest), device=device)
-                dst0 = torch.randint(0, self.num_nodes, size=(
-                    batch_size, self.num_heads, self.k_nearest), device=device)
+                src_norm = -self.atn(pos_src, pos_).permute(2, 0, 1)
+                dst_norm = -self.atn(pos_dst, pos_).permute(2, 0, 1)
+                # src0 = torch.randint(0, self.num_nodes, size=(
+                #     batch_size, self.num_heads, self.k_nearest), device=device)
+                # dst0 = torch.randint(0, self.num_nodes, size=(
+                #     batch_size, self.num_heads, self.k_nearest), device=device)
 
-            if self.sample_weights != 'attention':
-                # (k_nearest, batch_size, num_heads)
-                src0 = torch.topk(src_norm, k=self.k_nearest+1,
-                                  largest=False, sorted=False, dim=0).indices[1:]
-                dst0 = torch.topk(dst_norm, k=self.k_nearest+1,
-                                  largest=False, sorted=False, dim=0).indices[1:]
-                # (batch_size, num_heads, k_nearest)
-                src0 = src0.permute(1, 2, 0)
-                dst0 = dst0.permute(1, 2, 0)
+            # if self.sample_weights != 'attention':
+            # (k_nearest, batch_size, num_heads)
+            src0 = torch.topk(src_norm, k=self.k_nearest+1,
+                                largest=False, sorted=False, dim=0).indices[1:]
+            dst0 = torch.topk(dst_norm, k=self.k_nearest+1,
+                                largest=False, sorted=False, dim=0).indices[1:]
+            # (batch_size, num_heads, k_nearest)
+            src0 = src0.permute(1, 2, 0)
+            dst0 = dst0.permute(1, 2, 0)
 
 
         # (batch_size, num_heads, num_samples, embedding_dim)
