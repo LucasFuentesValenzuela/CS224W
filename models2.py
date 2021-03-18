@@ -432,6 +432,7 @@ class MAD_Model(nn.Module):
             sample_weights='attention',
             num_weight_layers=1,
             hidden_weight_dim=48,
+            thresh_weight=1
         )
         nn.init.xavier_uniform_(self.pos_embs)
         nn.init.xavier_uniform_(self.grad_embs)
@@ -455,10 +456,14 @@ class MAD_Model(nn.Module):
 
 
 class MADAttention(torch.nn.Module):
-    def __init__(self, embedding_dim, hidden_channels, out_channels, num_layers,
-                 dropout=.5):
+    def __init__(
+        self, embedding_dim, hidden_channels, 
+        out_channels, num_layers, dropout=.5
+        ):
         super().__init__()
+
         self.lins = torch.nn.ModuleList()
+
         if num_layers == 1:
             self.lins.append(nn.Linear(2*embedding_dim, out_channels))
         else:
@@ -473,7 +478,7 @@ class MADAttention(torch.nn.Module):
         for lin in self.lins:
             lin.reset_parameters()
 
-    def forward(self, x1, x0):
+    def forward(self, x1, x0, return_softmin=True):
         '''
         shapes:
         # x [pos_src, pos_dst]: (batch_size, num_heads, embedding_dim)
@@ -488,7 +493,10 @@ class MADAttention(torch.nn.Module):
         x = self.lins[-1](x)
         x = x.squeeze(3)
 
-        out = F.softmin(x, dim=2)
+        if return_softmin:
+            out = F.softmin(x, dim=2)
+        else:
+            out = torch.exp(-x) #do not normalize the softmins
         return out
 
 
@@ -506,7 +514,8 @@ class MADEdgePredictor(nn.Module):
         distance: str = 'euclidian',
         sample_weights: str = 'softmin',
         num_weight_layers: int = 3,
-        hidden_weight_dim: int = 32
+        hidden_weight_dim: int = 32, 
+        thresh_weight: int = 1
     ):
         '''
         distance: how to compute the weighting of different samples
@@ -525,6 +534,7 @@ class MADEdgePredictor(nn.Module):
         self.distance = distance
         self.sentinal_dist = sentinal_dist
         self.sample_weights = sample_weights
+        self.thresh_weight = thresh_weight
 
         # nn to apply to adj_t labels
         self.label_nn = nn.Linear(1, 1, bias=False)
@@ -778,9 +788,24 @@ class MADEdgePredictor(nn.Module):
 
         # Compute logit weight based on bespoke attention mechanism
         elif self.sample_weights == 'attention':
-            # (batch_size, num_heads, num_samples)
-            src_weight = self.atn(pos_src, pos_src0)
-            dst_weight = self.atn(pos_dst, pos_dst0)
+            if self.training:
+                # (batch_size, num_heads, num_samples)
+                src_weight = self.atn(pos_src, pos_src0, return_softmin=True)
+                dst_weight = self.atn(pos_dst, pos_dst0, return_softmin=True)
+
+            else:
+                # (batch_size, num_heads, num_samples)
+                src_weight = self.atn(pos_src, pos_src0, return_softmin=False)
+                dst_weight = self.atn(pos_dst, pos_dst0, return_softmin=False)
+
+                # replacing the "bad choices" by a standard weight of thresh_weight
+                src_weight[src_weight < self.thresh_weight] = self.thresh_weight
+                dst_weight[dst_weight < self.thresh_weight] = self.thresh_weight
+
+                # renormalizing
+                src_weight = src_weight/torch.sum(src_weight, dim=2).unsqueeze(2)
+                dst_weight = dst_weight/torch.sum(dst_weight, dim=2).unsqueeze(2)
+
             # (batch_size, num_heads, 2*num_samples)
             logit_weight = torch.cat([src_weight, dst_weight], dim=2)
 
