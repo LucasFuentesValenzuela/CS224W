@@ -11,7 +11,7 @@ from predictors import LinkPredictor
 
 def get_model(model_name: str) -> type:
     models = [GCN_Linear, MAD_Model, MAD_GCN, MAD_Field_NN,
-              MAD_GCN_Field_NN, MAD_SAGE, SAGE_Linear]
+              MAD_GCN_Field_NN, MAD_SAGE, MAD_SAGE2, SAGE_Linear]
     for m in models:
         if m.__name__.lower() == model_name.lower():
             return m
@@ -170,52 +170,6 @@ class SAGE(torch.nn.Module):
         return x
 
 
-class MAD_SAGE(nn.Module):
-    def __init__(
-        self,
-        num_nodes: int,
-        adj_t: torch_sparse.SparseTensor,
-        num_heads: int = 12,
-        mad_size: int = 12,
-        embed_size: int = 200,
-        hidden_size: int = 256,
-        dropout: float = 0.5,
-    ):
-        super(MAD_SAGE, self).__init__()
-
-        self.num_nodes = num_nodes
-        self.num_heads = num_heads
-        self.mad_size = mad_size
-
-        self.network = SAGE(
-            num_nodes=num_nodes,
-            embedding_dim=embed_size,
-            hidden_dim=hidden_size,
-            output_dim=num_heads * mad_size * 2,
-            num_layers=2,
-            dropout=dropout,
-        )
-        self.predictor = MADEdgePredictor(
-            num_nodes=num_nodes,
-            adj_t=adj_t,
-            num_heads=num_heads,
-            embedding_dim=mad_size,
-            num_sentinals=8,
-            num_samples=8,
-        )
-        self.gcn_cache = None
-
-    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
-
-        x = self.network(adj_t, edges)
-        x = torch.reshape(
-            x, (self.num_nodes, self.num_heads, 2 * self.mad_size))
-        x = torch.clone(x, memory_format=torch.contiguous_format)
-        pos = x[:, :, :self.mad_size]
-        grad = x[:, :, self.mad_size:]
-        return self.predictor(pos, grad, edges)
-
-
 class MAD_GCN(nn.Module):
     def __init__(
         self,
@@ -305,6 +259,56 @@ class MAD_SAGE(nn.Module):
         x = torch.clone(x, memory_format=torch.contiguous_format)
         pos = x[:, :, :self.mad_size]
         grad = x[:, :, self.mad_size:]
+        return self.predictor(pos, grad, edges)
+
+
+
+class MAD_SAGE2(nn.Module):
+    def __init__(
+        self,
+        num_nodes: int,
+        adj_t: torch_sparse.SparseTensor,
+        num_heads: int = 12,
+        mad_size: int = 12,
+        hidden_size: int = 256,
+        embed_size: int = 200,
+        dropout: float = 0.5,
+    ):
+        super(MAD_SAGE2, self).__init__()
+
+        self.num_nodes = num_nodes
+        self.num_heads = num_heads
+        self.mad_size = mad_size
+
+        self.embedding = nn.Parameter(torch.rand(self.num_nodes, self.num_heads, self.mad_size))
+        # nn.init.xavier_normal_(self.embedding)
+
+        self.network = SAGE(
+            num_nodes=num_nodes,
+            embedding_dim=embed_size,
+            hidden_dim=hidden_size,
+            output_dim=num_heads * mad_size,
+            num_layers=2,
+            dropout=dropout,
+        )
+        self.predictor = MADEdgePredictor(
+            num_nodes=num_nodes,
+            adj_t=adj_t,
+            num_heads=num_heads,
+            embedding_dim=mad_size,
+            num_sentinals=8,
+            num_samples=8,
+        )
+        self.gcn_cache = None
+
+    def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
+
+        x = self.network(adj_t, edges)
+        x = torch.reshape(
+            x, (self.num_nodes, self.num_heads, self.mad_size))
+        x = torch.clone(x, memory_format=torch.contiguous_format)
+        pos = self.embedding
+        grad = x
         return self.predictor(pos, grad, edges)
 
 
@@ -455,10 +459,13 @@ class MADAttention(torch.nn.Module):
                  dropout=.5):
         super().__init__()
         self.lins = torch.nn.ModuleList()
-        self.lins.append(torch.nn.Linear(2*embedding_dim, hidden_channels))
-        for _ in range(num_layers - 2):
-            self.lins.append(torch.nn.Linear(hidden_channels, hidden_channels))
-        self.lins.append(torch.nn.Linear(hidden_channels, out_channels))
+        if num_layers == 1:
+            self.lins.append(nn.Linear(2*embedding_dim, out_channels))
+        else:
+            self.lins.append(torch.nn.Linear(2*embedding_dim, hidden_channels))
+            for _ in range(num_layers - 2):
+                self.lins.append(torch.nn.Linear(hidden_channels, hidden_channels))
+            self.lins.append(torch.nn.Linear(hidden_channels, out_channels))
 
         self.dropout = dropout
 
@@ -496,7 +503,7 @@ class MADEdgePredictor(nn.Module):
         num_samples: int,
         sentinal_dist: float = 1.,
         distance: str = 'euclidian',
-        sample_weights: str = 'attention',
+        sample_weights: str = 'softmin',
         num_weight_layers: int = 3,
         hidden_weight_dim: int = 32
     ):
