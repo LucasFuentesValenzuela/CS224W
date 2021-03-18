@@ -631,10 +631,25 @@ class MADEdgePredictor(nn.Module):
                     ).view(distance_shape)
 
             elif self.sample_weights=='attention':
-                pos_ = pos.permute(1, 0, 2).unsqueeze(0).repeat((pos_src.shape[0], 1, 1, 1))
-                # # (batch_size, num_heads, num_nodes)
-                src_norm = -self.atn(pos_src, pos_).permute(2, 0, 1)
-                dst_norm = -self.atn(pos_dst, pos_).permute(2, 0, 1)
+                #shapes in attention mechanism: 
+                # x [pos_src, pos_dst]: (batch_size, num_heads, embedding_dim)
+                # x0 [pos_src0, pos_dst0]: (batch_size, num_heads, num_samples, embedding_dim)
+
+                # pos_src shape: (batch_size, num_heads, embedding_dim)
+
+                src0 = torch.randint(0, self.num_nodes, 
+                size=(batch_size, self.num_heads, self.k_nearest**2), 
+                device=device)
+                dst0 = torch.randint(0, self.num_nodes, 
+                size=(batch_size, self.num_heads, self.k_nearest**2), 
+                device=device)
+                # (batch_size, num_heads, k_nearest**2, embedding_dim)
+                pos_src0 = pos[src0, heads_idx.view(1, self.num_heads, 1)]
+                pos_dst0 = pos[dst0, heads_idx.view(1, self.num_heads, 1)]
+
+                # (k_nearest**2, batch_size, num_heads)
+                src_norm = -self.atn(pos_src, pos_src0).permute(2, 0, 1)
+                dst_norm = -self.atn(pos_dst, pos_dst0).permute(2, 0, 1)
                 # src0 = torch.randint(0, self.num_nodes, size=(
                 #     batch_size, self.num_heads, self.k_nearest), device=device)
                 # dst0 = torch.randint(0, self.num_nodes, size=(
