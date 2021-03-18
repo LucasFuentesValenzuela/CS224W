@@ -457,7 +457,7 @@ class MAD_Model(nn.Module):
 
 class MADAttention(torch.nn.Module):
     def __init__(
-        self, embedding_dim, hidden_channels, 
+        self, embedding_dim, hidden_channels,
         out_channels, num_layers, dropout=.5
         ):
         super().__init__()
@@ -514,7 +514,7 @@ class MADEdgePredictor(nn.Module):
         distance: str = 'euclidian',
         sample_weights: str = 'softmin',
         num_weight_layers: int = 3,
-        hidden_weight_dim: int = 32, 
+        hidden_weight_dim: int = 32,
         thresh_weight: int = 1
     ):
         '''
@@ -641,17 +641,17 @@ class MADEdgePredictor(nn.Module):
                     ).view(distance_shape)
 
             elif self.sample_weights=='attention':
-                #shapes in attention mechanism: 
+                #shapes in attention mechanism:
                 # x [pos_src, pos_dst]: (batch_size, num_heads, embedding_dim)
                 # x0 [pos_src0, pos_dst0]: (batch_size, num_heads, num_samples, embedding_dim)
 
                 # pos_src shape: (batch_size, num_heads, embedding_dim)
 
-                src0 = torch.randint(0, self.num_nodes, 
-                size=(batch_size, self.num_heads, self.k_nearest**2), 
+                src0 = torch.randint(0, self.num_nodes,
+                size=(batch_size, self.num_heads, self.k_nearest*16),
                 device=device)
-                dst0 = torch.randint(0, self.num_nodes, 
-                size=(batch_size, self.num_heads, self.k_nearest**2), 
+                dst0 = torch.randint(0, self.num_nodes,
+                size=(batch_size, self.num_heads, self.k_nearest*16),
                 device=device)
                 # (batch_size, num_heads, k_nearest**2, embedding_dim)
                 pos_src0 = pos[src0, heads_idx.view(1, self.num_heads, 1)]
@@ -799,7 +799,7 @@ class MADEdgePredictor(nn.Module):
                 dst_weight = self.atn(pos_dst, pos_dst0, return_softmin=False)
 
                 # replacing the "bad choices" by a standard weight of thresh_weight
-                src_weight[src_weight < self.thresh_weight] = 0 
+                src_weight[src_weight < self.thresh_weight] = 0
                 dst_weight[dst_weight < self.thresh_weight] = 0
 
                 # renormalizing
