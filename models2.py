@@ -799,12 +799,12 @@ class MADEdgePredictor(nn.Module):
                 dst_weight = self.atn(pos_dst, pos_dst0, return_softmin=False)
 
                 # replacing the "bad choices" by a standard weight of thresh_weight
-                src_weight[src_weight < self.thresh_weight] = self.thresh_weight
-                dst_weight[dst_weight < self.thresh_weight] = self.thresh_weight
+                src_weight[src_weight < self.thresh_weight] = 0 
+                dst_weight[dst_weight < self.thresh_weight] = 0
 
                 # renormalizing
-                src_weight = src_weight/torch.sum(src_weight, dim=2).unsqueeze(2)
-                dst_weight = dst_weight/torch.sum(dst_weight, dim=2).unsqueeze(2)
+                src_weight = src_weight/torch.sum(src_weight, dim=2, keepdim=True)
+                dst_weight = dst_weight/torch.sum(dst_weight, dim=2, keepdim=True)
 
             # (batch_size, num_heads, 2*num_samples)
             logit_weight = torch.cat([src_weight, dst_weight], dim=2)
