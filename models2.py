@@ -421,7 +421,7 @@ class MAD_Model(nn.Module):
             num_heads=num_heads,
             embedding_dim=embedding_dim,
             num_sentinals=8,
-            num_samples=16,
+            num_samples=8,
             sentinal_dist=1,
             distance="euclidian",
             sample_weights='attention',
@@ -454,7 +454,6 @@ class MADAttention(torch.nn.Module):
     def __init__(self, embedding_dim, hidden_channels, out_channels, num_layers,
                  dropout=.5):
         super().__init__()
-
         self.lins = torch.nn.ModuleList()
         self.lins.append(torch.nn.Linear(2*embedding_dim, hidden_channels))
         for _ in range(num_layers - 2):
@@ -469,7 +468,7 @@ class MADAttention(torch.nn.Module):
 
     def forward(self, x1, x0):
         '''
-        shapes: 
+        shapes:
         # x [pos_src, pos_dst]: (batch_size, num_heads, embedding_dim)
         # x0 [pos_src0, pos_dst0]: (batch_size, num_heads, num_samples, embedding_dim)
         '''

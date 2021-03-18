@@ -45,7 +45,7 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--checkpoint_freq',
         type=int,
-        default=30,
+        default=10,
         help='Number of epochs between each checkpoint',
     )
     parser.add_argument(
