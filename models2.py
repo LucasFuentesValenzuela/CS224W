@@ -432,7 +432,8 @@ class MAD_Model(nn.Module):
             num_weight_layers=1,
             hidden_weight_dim=32
         )
-
+        nn.init.uniform_(self.pos_embs)
+        nn.init.uniform_(self.grad_embs)
         nn.init.xavier_uniform_(self.pos_embs)
         nn.init.xavier_uniform_(self.grad_embs)
 
@@ -488,7 +489,7 @@ class MADAttention(torch.nn.Module):
         x = self.lins[-1](x)
         x = x.squeeze(3)
 
-        out = torch.nn.Softmax(dim=2)(x)
+        out = F.softmin(x, dim=2)
         return out
 
 
@@ -631,8 +632,8 @@ class MADEdgePredictor(nn.Module):
             elif self.sample_weights=='attention':
                 pos_ = pos.permute(1, 0, 2).unsqueeze(0).repeat((pos_src.shape[0], 1, 1, 1))
                 # (batch_size, num_heads, num_nodes)
-                src_norm = self.atn(pos_src, pos_).permute(1, 2, 0)
-                dst_norm = self.atn(pos_dst, pos_).permute(1, 2, 0)
+                src_norm = self.atn(pos_src, pos_).permute(2, 0, 1)
+                dst_norm = self.atn(pos_dst, pos_).permute(2, 0, 1)
 
             # (num_samples, batch_size, num_heads)
             src0 = torch.topk(src_norm, k=self.num_samples+1,
