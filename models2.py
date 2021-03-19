@@ -248,6 +248,7 @@ class MAD_SAGE(nn.Module):
             embedding_dim=mad_size,
             num_sentinals=8,
             num_samples=8,
+            k_nearest=32,
         )
         self.gcn_cache = None
 
@@ -298,6 +299,9 @@ class MAD_SAGE2(nn.Module):
             embedding_dim=mad_size,
             num_sentinals=8,
             num_samples=8,
+            distance='euclidian',
+            k_nearest=32,
+            sample_weights='softmin',
         )
         self.gcn_cache = None
 
@@ -424,13 +428,13 @@ class MAD_Model(nn.Module):
             adj_t=adj_t,
             num_heads=num_heads,
             embedding_dim=embedding_dim,
-            num_sentinals=8,
+            num_sentinals=0,
             num_samples=8,
-            k_nearest=64,
+            k_nearest=8,
             sentinal_dist=1,
             distance="euclidian",
             sample_weights='attention',
-            num_weight_layers=1,
+            num_weight_layers=2,
             hidden_weight_dim=48,
             thresh_weight=1
         )
@@ -647,24 +651,24 @@ class MADEdgePredictor(nn.Module):
 
                 pos_ = pos.permute(1, 0, 2).unsqueeze(0).repeat((pos_src.shape[0], 1, 1, 1))
                 # # (batch_size, num_heads, num_nodes)
-                # src_norm = -self.atn(pos_src, pos_).permute(2, 0, 1)
-                # dst_norm = -self.atn(pos_dst, pos_).permute(2, 0, 1)
+                src_norm = -self.atn(pos_src, pos_, return_softmin=False).permute(2, 0, 1)
+                dst_norm = -self.atn(pos_dst, pos_, return_softmin=False).permute(2, 0, 1)
 
                 # choose random nodes for performance
-                src0 = torch.randint(0, self.num_nodes, size=(
-                    batch_size, self.num_heads, self.k_nearest), device=device)
-                dst0 = torch.randint(0, self.num_nodes, size=(
-                    batch_size, self.num_heads, self.k_nearest), device=device)
+                # src0 = torch.randint(0, self.num_nodes, size=(
+                #     batch_size, self.num_heads, self.k_nearest), device=device)
+                # dst0 = torch.randint(0, self.num_nodes, size=(
+                #     batch_size, self.num_heads, self.k_nearest), device=device)
 
-            if self.sample_weights != 'attention':
-                # (k_nearest, batch_size, num_heads)
-                src0 = torch.topk(src_norm, k=self.k_nearest+1,
-                                    largest=False, sorted=False, dim=0).indices[1:]
-                dst0 = torch.topk(dst_norm, k=self.k_nearest+1,
-                                    largest=False, sorted=False, dim=0).indices[1:]
-                # (batch_size, num_heads, k_nearest)
-                src0 = src0.permute(1, 2, 0)
-                dst0 = dst0.permute(1, 2, 0)
+            # if self.sample_weights != 'attention':
+            # (k_nearest, batch_size, num_heads)
+            src0 = torch.topk(src_norm, k=self.k_nearest+1,
+                                largest=False, sorted=False, dim=0).indices[1:]
+            dst0 = torch.topk(dst_norm, k=self.k_nearest+1,
+                                largest=False, sorted=False, dim=0).indices[1:]
+            # (batch_size, num_heads, k_nearest)
+            src0 = src0.permute(1, 2, 0)
+            dst0 = dst0.permute(1, 2, 0)
 
 
         # (batch_size, num_heads, num_samples, embedding_dim)
@@ -783,8 +787,8 @@ class MADEdgePredictor(nn.Module):
             src_weight = self.atn(pos_src, pos_src0, return_softmin=False)
             dst_weight = self.atn(pos_dst, pos_dst0, return_softmin=False)
 
-            total_weight = torch.sum(src_weight, dim=2) + torch.sum(dst_weight, dim=2)
-            total_weight = total_weight + self.num_sentinals * torch.sigmoid(self.sentinal_dist)
+            total_weight = torch.sum(src_weight, dim=2, keepdim=True) + torch.sum(dst_weight, dim=2, keepdim=True)
+            total_weight = total_weight + self.num_sentinals * torch.sigmoid(torch.tensor(self.sentinal_dist, device=device, dtype=torch.float))
 
             # (batch_size, num_heads, 2*num_samples)
             logit_weight = torch.cat([src_weight, dst_weight], dim=2) / total_weight
