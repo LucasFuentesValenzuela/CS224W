@@ -9,3 +9,4 @@ tmp*
 logs*
 *checkpoints*
 dataset*
+report_diagrams/*

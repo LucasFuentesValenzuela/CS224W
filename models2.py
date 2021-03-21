@@ -6,7 +6,6 @@ import torch_sparse
 from typing import Tuple, Optional
 # Some built in PyG layers
 from torch_geometric.nn import GCNConv, GATConv, SAGEConv
-from predictors import LinkPredictor
 
 
 def get_model(model_name: str) -> type:
@@ -929,3 +928,43 @@ class FieldPredictor(torch.nn.Module):
         # reshape to (n_heads, n_nodes, embedding_dim)
         x = x.view(self.n_nodes, self.n_heads, self.embedding_dim)
         return x
+
+
+
+
+class LinkPredictor(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers,
+                 dropout):
+        super().__init__()
+
+        self.lins = torch.nn.ModuleList()
+        self.lins.append(torch.nn.Linear(in_channels, hidden_channels))
+        for _ in range(num_layers - 2):
+            self.lins.append(torch.nn.Linear(hidden_channels, hidden_channels))
+        self.lins.append(torch.nn.Linear(hidden_channels, out_channels))
+
+        self.dropout = dropout
+
+    def reset_parameters(self):
+        for lin in self.lins:
+            lin.reset_parameters()
+
+    def forward(self, x, edges):
+        '''
+        x: embeddings
+        edges:
+        '''
+
+        # Decode
+        # source nodes embeddings, shape (num_query_edges, final_embedding_dim)
+        x_s = x[edges[0, :]]
+        # target nodes embeddings, shape (num_query_edges, final_embedding_dim)
+        x_t = x[edges[1, :]]
+
+        x = x_s * x_t
+        for lin in self.lins[:-1]:
+            x = lin(x)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.lins[-1](x)
+        return torch.sigmoid(x).flatten()
