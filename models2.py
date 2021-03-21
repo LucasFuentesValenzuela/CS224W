@@ -23,12 +23,14 @@ class GCN_Linear(nn.Module):
         self,
         num_nodes: int,
         adj_t: torch_sparse.SparseTensor,
-        output_dim=256,
-        dropout=0.5,
+        embedding_dim: int = 100,
+        hidden_dim: int = 256,
+        output_dim: int = 288,
+        dropout = 0.5,
     ):
         super(GCN_Linear, self).__init__()
 
-        self.network = GCN(num_nodes, output_dim=output_dim, dropout=dropout)
+        self.network = GCN(num_nodes, embedding_dim=embedding_dim, hidden_dim=hidden_dim, output_dim=output_dim, dropout=dropout)
         self.predictor = LinkPredictor(
             in_channels=output_dim,
             hidden_channels=output_dim,
@@ -36,6 +38,10 @@ class GCN_Linear(nn.Module):
             num_layers=2,
             dropout=dropout,
         )
+
+    def reset_parameters(self):
+        self.network.reset_parameters()
+        self.predictor.reset_parameters()
 
     def forward(
         self,
@@ -51,12 +57,16 @@ class SAGE_Linear(nn.Module):
         self,
         num_nodes: int,
         adj_t: torch_sparse.SparseTensor,
-        output_dim=256,
+        embedding_dim = 100,
+        hidden_dim = 256,
+        output_dim=288,
         dropout=0.5,
     ):
         super(SAGE_Linear, self).__init__()
 
         self.network = SAGE(
+            embedding_dim=embedding_dim,
+            hidden_dim=hidden_dim,
             num_nodes=num_nodes,
             output_dim=output_dim,
             dropout=dropout,
@@ -68,6 +78,10 @@ class SAGE_Linear(nn.Module):
             num_layers=2,
             dropout=dropout,
         )
+
+    def reset_parameters(self):
+        self.network.reset_parameters()
+        self.predictor.reset_parameters()
 
     def forward(
         self,
@@ -98,16 +112,17 @@ class GCN(nn.Module):
         self.embedding = nn.Embedding(
             num_nodes, embedding_dim)
 
-        nn.init.xavier_uniform_(self.embedding.weight)
-
         conv_layers = [GCNConv(embedding_dim, hidden_dim, cached=cache)] + \
             [GCNConv(hidden_dim, hidden_dim, cached=cache) for _ in range(num_layers-2)] + \
             [GCNConv(hidden_dim, output_dim, cached=cache)]
         self.convs = nn.ModuleList(conv_layers)
 
+        self.reset_parameters()
+
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
+        nn.init.xavier_uniform_(self.embedding.weight)
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
         '''
@@ -158,6 +173,7 @@ class SAGE(torch.nn.Module):
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
+        nn.init.xavier_uniform_(self.embedding.weight)
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor):
         x = self.embedding.weight
@@ -177,7 +193,7 @@ class MAD_GCN(nn.Module):
         adj_t: torch_sparse.SparseTensor,
         num_heads: int = 12,
         mad_size: int = 12,
-        embed_size: int = 200,
+        embed_size: int = 100,
         hidden_size: int = 256,
         dropout: float = 0.5,
     ):
@@ -200,10 +216,15 @@ class MAD_GCN(nn.Module):
             adj_t=adj_t,
             num_heads=num_heads,
             embedding_dim=mad_size,
-            num_sentinals=8,
-            num_samples=8,
+            num_sentinals=16,
+            num_samples=16,
+            k_nearest=16
         )
         self.gcn_cache = None
+
+    def reset_parameters(self):
+        self.network.reset_parameters()
+        self.predictor.reset_parameters()
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
 
@@ -216,6 +237,8 @@ class MAD_GCN(nn.Module):
         return self.predictor(pos, grad, edges)
 
 
+
+
 class MAD_SAGE(nn.Module):
     def __init__(
         self,
@@ -224,7 +247,7 @@ class MAD_SAGE(nn.Module):
         num_heads: int = 12,
         mad_size: int = 12,
         hidden_size: int = 256,
-        embed_size: int = 200,
+        embed_size: int = 100,
         dropout: float = 0.5,
     ):
         super(MAD_SAGE, self).__init__()
@@ -246,11 +269,15 @@ class MAD_SAGE(nn.Module):
             adj_t=adj_t,
             num_heads=num_heads,
             embedding_dim=mad_size,
-            num_sentinals=8,
-            num_samples=8,
-            k_nearest=32,
+            num_sentinals=16,
+            num_samples=16,
+            k_nearest=16,
         )
         self.gcn_cache = None
+
+    def reset_parameters(self):
+        self.network.reset_parameters()
+        self.predictor.reset_parameters()
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
 
@@ -272,7 +299,7 @@ class MAD_SAGE2(nn.Module):
         num_heads: int = 12,
         mad_size: int = 12,
         hidden_size: int = 256,
-        embed_size: int = 200,
+        embed_size: int = 100,
         dropout: float = 0.5,
     ):
         super(MAD_SAGE2, self).__init__()
@@ -282,7 +309,7 @@ class MAD_SAGE2(nn.Module):
         self.mad_size = mad_size
 
         self.embedding = nn.Parameter(torch.empty((self.num_nodes, self.num_heads, self.mad_size)))
-        nn.init.xavier_normal_(self.embedding)
+        nn.init.xavier_uniform_(self.embedding)
 
         self.network = SAGE(
             num_nodes=num_nodes,
@@ -297,13 +324,17 @@ class MAD_SAGE2(nn.Module):
             adj_t=adj_t,
             num_heads=num_heads,
             embedding_dim=mad_size,
-            num_sentinals=8,
-            num_samples=8,
+            num_sentinals=16,
+            num_samples=16,
             distance='euclidian',
-            k_nearest=32,
+            k_nearest=16,
             sample_weights='softmin',
         )
-        self.gcn_cache = None
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.embedding)
+        self.network.reset_parameters()
+        self.predictor.reset_parameters()
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
 
@@ -352,10 +383,13 @@ class MAD_GCN_Field_NN(nn.Module):
 
         self.field_nn = FieldPredictor(
             mad_size, num_heads, num_nodes, dropout=0.5, num_layers=3)
-        self.gcn_cache = None
+
+    def reset_parameters(self):
+        self.network.reset_parameters()
+        self.predictor.reset_parameters()
+        self.field_nn.reset_parameters()
 
     def forward(self, adj_t: torch_sparse.SparseTensor, edges: torch.Tensor) -> torch.Tensor:
-
         x = self.network(adj_t, edges)
         x = torch.reshape(x, (self.num_nodes, self.num_heads, self.mad_size))
         x = torch.clone(x, memory_format=torch.contiguous_format)
@@ -389,6 +423,11 @@ class MAD_Field_NN(nn.Module):
         )
 
         nn.init.xavier_uniform_(self.pos_embs)
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.pos_embs)
+        self.field_nn.reset_parameters()
+        self.predictor.reset_parameters()
 
     def forward(
         self,
@@ -428,18 +467,23 @@ class MAD_Model(nn.Module):
             adj_t=adj_t,
             num_heads=num_heads,
             embedding_dim=embedding_dim,
-            num_sentinals=0,
-            num_samples=8,
-            k_nearest=8,
-            sentinal_dist=1,
-            distance="euclidian",
-            sample_weights='attention',
-            num_weight_layers=2,
+            num_sentinals=16,
+            num_samples=16,
+            k_nearest=16,
+            sentinal_dist=0,
+            distance='inner',
+            sample_weights='softmin',
+            num_weight_layers=1,
             hidden_weight_dim=48,
             thresh_weight=1
         )
         nn.init.xavier_uniform_(self.pos_embs)
         nn.init.xavier_uniform_(self.grad_embs)
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.pos_embs)
+        nn.init.xavier_uniform_(self.grad_embs)
+        self.predictor.reset_parameters()
 
     def forward(
         self,
@@ -561,6 +605,13 @@ class MADEdgePredictor(nn.Module):
             self.atn = MADAttention(
                 embedding_dim, hidden_weight_dim, 1, num_weight_layers)
 
+    def reset_parameters(self):
+        self.label_nn.reset_parameters()
+        if self.distance == 'inner':
+            self.W.reset_parameters()
+        if self.sample_weights == 'attention':
+            self.atn.reset_parameters()
+
     def forward(self, pos: torch.Tensor, grads: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
         '''
         pos Tensor of shape (num_nodes, num_heads, embedding_dim)
@@ -603,7 +654,7 @@ class MADEdgePredictor(nn.Module):
         else:
             # Grab TopK closest src0 and dst0 nodes to src and dst
             if self.sample_weights=='softmin':
-                if self.distance == 'euclidian' or self.distance == 'inner':
+                if self.distance == 'euclidian':
                     # (num_nodes, batch_size, num_heads)
                     src_norm = torch.norm(
                         pos.view(self.num_nodes, 1, self.num_heads,
@@ -619,6 +670,33 @@ class MADEdgePredictor(nn.Module):
                                     self.embedding_dim),
                         dim=3,
                     )
+
+                elif self.distance == 'inner':
+
+                    pos_norm = self.W(pos)
+                    pos_norm /= torch.norm(pos_norm, dim=2, keepdim=True)
+
+                    distance_shape = (self.num_nodes, batch_size, self.num_heads)
+                    # batch_size, num_heads, embedding_dim
+                    pos_src_norm = pos_src / \
+                        torch.norm(pos_src, dim=2, keepdim=True)
+                    src_norm = -torch.sum(
+                        pos_src_norm.view(1, batch_size, self.num_heads, self.embedding_dim) *
+                        pos_norm.view(self.num_nodes, 1,
+                                    self.num_heads, self.embedding_dim),
+                        dim=3
+                    ).view(distance_shape)
+
+                    # batch_size, num_heads, embedding_dim
+                    pos_dst_norm = pos_dst / \
+                        torch.norm(pos_dst, dim=2, keepdim=True)
+                    dst_norm = -torch.sum(
+                        pos_dst_norm.view(1, batch_size, self.num_heads, self.embedding_dim) *
+                        pos_norm.view(self.num_nodes, 1,
+                                    self.num_heads, self.embedding_dim),
+                        dim=3
+                    ).view(distance_shape)
+
                 elif self.distance == 'dot':
                     # num_nodes, num_heads, embed_dim
                     pos_norm = pos / torch.norm(pos, dim=2, keepdim=True)
@@ -660,7 +738,6 @@ class MADEdgePredictor(nn.Module):
                 # dst0 = torch.randint(0, self.num_nodes, size=(
                 #     batch_size, self.num_heads, self.k_nearest), device=device)
 
-            # if self.sample_weights != 'attention':
             # (k_nearest, batch_size, num_heads)
             src0 = torch.topk(src_norm, k=self.k_nearest+1,
                                 largest=False, sorted=False, dim=0).indices[1:]
@@ -725,7 +802,7 @@ class MADEdgePredictor(nn.Module):
                 pos_src_ = pos_src.view(
                     batch_size, self.num_heads, 1, self.embedding_dim)
                 pos_src0_proj = self.W(pos_src0)
-                inner_src = torch.sum(
+                inner_src = -torch.sum(
                     pos_src_*pos_src0_proj,
                     dim=3
                 )/(torch.norm(pos_src_, dim=3)*(torch.norm(pos_src0_proj, dim=3)))
@@ -733,7 +810,7 @@ class MADEdgePredictor(nn.Module):
                 pos_dst_ = pos_dst.view(
                     batch_size, self.num_heads, 1, self.embedding_dim)
                 pos_dst0_proj = self.W(pos_dst0)
-                inner_dst = torch.sum(
+                inner_dst = -torch.sum(
                     pos_dst_*pos_dst0_proj,
                     dim=3
                 )/(torch.norm(pos_dst_, dim=3)*(torch.norm(pos_dst0_proj, dim=3)))
@@ -777,9 +854,7 @@ class MADEdgePredictor(nn.Module):
 
             # Get softmax weights, strip out sentinals
             # (batch_size, num_heads, num_samples * 2)
-            # logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :self.num_samples*2]
-            logit_weight = F.softmin(norm_sentinals, dim=2)[
-                :, :, :num_samples*2]
+            logit_weight = F.softmin(norm_sentinals, dim=2)[:, :, :num_samples*2]
 
         # Compute logit weight based on bespoke attention mechanism
         elif self.sample_weights == 'attention':

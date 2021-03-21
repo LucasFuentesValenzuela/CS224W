@@ -27,13 +27,13 @@ def add_train_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--train_batch_size',
         type=int,
-        default=66745,
+        default=4096,
         help='training mini-batch size',
     )
     parser.add_argument(
         '--val_batch_size',
         type=int,
-        default=66745,
+        default=1024,
         help='validation mini-batch size',
     )
     parser.add_argument(
@@ -113,7 +113,7 @@ def add_test_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=66745,
+        default=1024,
         help='mini-batch size',
     )
     parser.add_argument(

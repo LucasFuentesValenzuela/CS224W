@@ -65,7 +65,7 @@ def load_training_data() -> Tuple[
     train_graph = transform(train_graph)
     valid_graph = transform(valid_graph)
 
-    return train_graph, valid_graph, train_edges, eval_edges, valid_edges
+    return train_graph, valid_graph, edge_split['train'], eval_edges, valid_edges
 
 
 def load_test_data() -> Tuple[
