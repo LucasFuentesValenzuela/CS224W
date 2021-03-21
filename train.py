@@ -13,7 +13,6 @@ from torch_geometric.utils import negative_sampling
 from ogb.linkproppred import Evaluator
 
 from args import *
-# import models
 import model_utils
 import models2 as models
 

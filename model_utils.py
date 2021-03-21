@@ -12,7 +12,6 @@ import torch_geometric as pyg
 import torch_geometric.transforms as T
 import networkx as nx
 
-import models
 
 
 def save_model(model: nn.Module, path: str) -> nn.Module:

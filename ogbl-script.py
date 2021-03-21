@@ -121,7 +121,7 @@ def main():
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--log_steps', type=int, default=1)
     parser.add_argument('--model', type=str, default='MAD_GCN',
-        choices=['GCN_Linear, SAGE_Linear, MAD_GCN, MAD_SAGE, MAD_Model'])
+        choices=['GCN_Linear', 'SAGE_Linear', 'MAD_GCN', 'MAD_SAGE', 'MAD_Model'])
     parser.add_argument('--train_batch_size', type=int, default=4096)
     parser.add_argument('--test_batch_size', type=int, default=1024)
     parser.add_argument('--lr', type=float, default=0.005)
